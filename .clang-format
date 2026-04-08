@@ -1,0 +1,14 @@
+BasedOnStyle: Chromium
+ColumnLimit: 120
+IndentWidth: 2
+ContinuationIndentWidth: 4
+PointerAlignment: Left
+DerivePointerAlignment: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+SpaceAfterCStyleCast: false
+IncludeBlocks: Regroup
+BinPackArguments: false
+BinPackParameters: false
