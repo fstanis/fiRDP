@@ -1,10 +1,6 @@
 // fiRDP: A lightweight RDP client
 // Copyright (C) 2026 Filip Stanis
 //
-// Based on FreeRDP SDL client code:
-// Copyright 2022-2025 Armin Novak <armin.novak@thincast.com>
-// Licensed under the Apache License, Version 2.0
-//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
@@ -20,33 +16,21 @@
 
 #pragma once
 
-#include <freerdp/client/file.h>
+#include <SDL3/SDL_keycode.h>
+#include <SDL3/SDL_scancode.h>
 
-#include <expected>
 #include <string>
 #include <vector>
 
-#include "host_keys.hpp"
-
-enum class SessionError {
-  kLogonFailure,
-  kUserDisconnect,
-  kGeneral,
+struct HostKey {
+  SDL_Keymod mods;
+  SDL_Scancode scancode;
 };
 
-struct SessionFailure {
-  SessionError code;
-  std::string message;
-};
+// Parses key combo strings like "Super+Q", "Alt+F4", "Ctrl+Shift+Escape".
+// Supported modifiers: Ctrl, Alt, Shift, Super (or Win/Cmd).
+// Returns empty vector element for unparseable strings (with warning to stderr).
+std::vector<HostKey> parse_host_keys(const std::vector<std::string>& specs);
 
-struct SessionOptions {
-  bool grab_keyboard = false;
-  std::vector<HostKey> host_keys;
-};
-
-class RdpSession {
- public:
-  static std::expected<void, SessionFailure> run(rdpFile* file,
-                                                 const std::string& password,
-                                                 const SessionOptions& opts = {});
-};
+// Returns true if the given modifier state and scancode match any host key.
+bool is_host_key(const std::vector<HostKey>& keys, SDL_Keymod mods, SDL_Scancode scancode);

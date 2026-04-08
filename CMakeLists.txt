@@ -4,11 +4,11 @@ project(fiRDP LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Use clang + lld for LTO compatibility
-add_link_options(-fuse-ld=lld)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O3 -flto=thin -march=native)
-    add_link_options(-flto=thin)
+    add_compile_options(-O3 -march=native)
+    if(NOT APPLE)
+        add_link_options(-fuse-ld=lld)
+    endif()
 endif()
 
 # --- Build FreeRDP as a subdirectory (static, no clients/servers) ---
@@ -30,8 +30,15 @@ add_subdirectory(FreeRDP EXCLUDE_FROM_ALL)
 
 # --- Find other dependencies ---
 find_package(SDL3 REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+
+if(APPLE)
+    find_library(SECURITY_FRAMEWORK Security REQUIRED)
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    find_library(APPSERVICES_FRAMEWORK ApplicationServices REQUIRED)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+endif()
 
 # --- FreeRDP SDL3 client sources (core rendering/input — not dialogs) ---
 set(FREERDP_SDL_DIR "${CMAKE_SOURCE_DIR}/FreeRDP/client/SDL")
@@ -56,26 +63,37 @@ add_executable(fiRDP
     src/rdp_file.cpp
     src/password_store.cpp
     src/rdp_connection.cpp
+    src/host_keys.cpp
     src/fi_dialogs.cpp
     src/fi_dialog_stubs.cpp
     ${SDL3_CLIENT_SOURCES}
 )
 
 target_include_directories(fiRDP PRIVATE
-    ${CMAKE_SOURCE_DIR}/src                 # our headers
-    ${FREERDP_SDL_DIR}/SDL3                 # sdl_context.hpp, sdl_utils.hpp, etc.
-    ${FREERDP_SDL_DIR}/common               # sdl_prefs.hpp, sdl_common_utils.hpp
-    # FreeRDP headers (source + generated)
+    ${CMAKE_SOURCE_DIR}/src
+    ${FREERDP_SDL_DIR}/SDL3
+    ${FREERDP_SDL_DIR}/common
     ${CMAKE_SOURCE_DIR}/FreeRDP/include
     ${CMAKE_BINARY_DIR}/FreeRDP/include
     ${CMAKE_SOURCE_DIR}/FreeRDP/winpr/include
     ${CMAKE_BINARY_DIR}/FreeRDP/winpr/include
 )
 
+target_compile_options(fiRDP PRIVATE -include cstdlib)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT APPLE)
+    set_target_properties(fiRDP PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
 target_link_libraries(fiRDP PRIVATE
     SDL3::SDL3
-    PkgConfig::LIBSECRET
     freerdp-client
     freerdp
     winpr
 )
+
+if(APPLE)
+    target_link_libraries(fiRDP PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK} ${APPSERVICES_FRAMEWORK})
+else()
+    target_link_libraries(fiRDP PRIVATE PkgConfig::LIBSECRET)
+endif()

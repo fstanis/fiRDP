@@ -28,6 +28,7 @@
 #include <freerdp/client/cliprdr.h>
 #include <freerdp/client/file.h>
 #include <freerdp/constants.h>
+#include <freerdp/error.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/log.h>
@@ -53,8 +54,10 @@ static constexpr struct {
   const char* key;
   const char* value;
 } kPreInitHints[] = {
+#ifndef __APPLE__
     {SDL_HINT_VIDEO_DRIVER, "wayland"},
     {SDL_HINT_VIDEO_DOUBLE_BUFFER, "1"},
+#endif
 };
 
 // SDL hints applied after SDL_Init
@@ -190,20 +193,33 @@ static void SDLCALL sdl_log_bridge(void* userdata, int category, SDL_LogPriority
 
 // Event loop helpers
 
+static bool is_disconnect_shortcut(const SDL_Event& ev, SDL_Keymod mods) {
+#ifdef __APPLE__
+  return (mods & SDL_KMOD_GUI) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F4;
+#else
+  return (mods & SDL_KMOD_CTRL) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F4;
+#endif
+}
+
+static bool is_fullscreen_shortcut(const SDL_Event& ev, SDL_Keymod mods) {
+#ifdef __APPLE__
+  return (mods & SDL_KMOD_GUI) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F11;
+#else
+  return (mods & SDL_KMOD_CTRL) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F11;
+#endif
+}
+
 static void handle_key_event(SdlContext* sdl, const SDL_Event& ev) {
   auto mods = SDL_GetModState();
   WLog_Print(sdl->getWLog(), WLOG_DEBUG, "KEY_DOWN scancode=0x%x mods=0x%x", ev.key.scancode, mods);
 
-  if (ev.key.scancode != SDL_SCANCODE_PAUSE)
-    return;
-
-  if ((mods & SDL_KMOD_CTRL) && (mods & SDL_KMOD_ALT)) {
-    WLog_Print(sdl->getWLog(), WLOG_INFO, "Ctrl+Alt+Break: disconnecting");
+  if (is_disconnect_shortcut(ev, mods)) {
+    WLog_Print(sdl->getWLog(), WLOG_INFO, "Disconnect shortcut pressed");
     std::ignore = freerdp_abort_connect_context(sdl->context());
     return;
   }
-  if (mods & SDL_KMOD_ALT) {
-    WLog_Print(sdl->getWLog(), WLOG_INFO, "Alt+Break: toggling fullscreen");
+  if (is_fullscreen_shortcut(ev, mods)) {
+    WLog_Print(sdl->getWLog(), WLOG_INFO, "Fullscreen shortcut pressed");
     std::ignore = sdl->toggleFullscreen();
   }
 }
@@ -279,7 +295,7 @@ static void handle_user_event(SdlContext* sdl, const SDL_Event& ev) {
   }
 }
 
-static int event_loop(SdlContext* sdl) {
+static int event_loop(SdlContext* sdl, const std::vector<HostKey>& host_keys) {
   try {
     while (!sdl->shallAbort()) {
       SDL_Event ev = {};
@@ -301,6 +317,14 @@ static int event_loop(SdlContext* sdl) {
             break;
           case SDL_EVENT_KEY_DOWN:
             handle_key_event(sdl, ev);
+            if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
+              break;
+            if (!sdl->handleEvent(ev))
+              throw ConnectionError{-1, "handleEvent"};
+            break;
+          case SDL_EVENT_KEY_UP:
+            if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
+              break;
             if (!sdl->handleEvent(ev))
               throw ConnectionError{-1, "handleEvent"};
             break;
@@ -339,27 +363,37 @@ static void apply_hints(auto& table) {
     SDL_SetHint(key, value);
 }
 
-using Result = std::expected<void, std::string>;
+using Result = std::expected<void, SessionFailure>;
+
+static auto fail(SessionError code, std::string msg) {
+  return std::unexpected(SessionFailure{code, std::move(msg)});
+}
+
+static auto fail(std::string msg) {
+  return fail(SessionError::kGeneral, std::move(msg));
+}
 
 static Result init_freerdp(rdpFile* file,
                            const std::string& password,
+                           const SessionOptions& opts,
                            std::unique_ptr<sdl_rdp_context, void (*)(sdl_rdp_context*)>& owner) {
   RDP_CLIENT_ENTRY_POINTS ep = {};
   register_entry_points(&ep);
 
   owner = {reinterpret_cast<sdl_rdp_context*>(freerdp_client_context_new(&ep)), context_free};
   if (!owner)
-    return std::unexpected("Failed to create FreeRDP context");
+    return fail("Failed to create FreeRDP context");
 
   auto* settings = owner->sdl->context()->settings;
 
   if (!freerdp_client_populate_settings_from_rdp_file(file, settings))
-    return std::unexpected("Failed to apply RDP file settings");
+    return fail("Failed to apply RDP file settings");
 
   if (!password.empty())
     freerdp_settings_set_string(settings, FreeRDP_Password, password.c_str());
 
   freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, TRUE);
+  freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, opts.grab_keyboard ? TRUE : FALSE);
   return {};
 }
 
@@ -367,7 +401,7 @@ static Result init_sdl(SdlContext* sdl) {
   apply_hints(kPreInitHints);
 
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
-    return std::unexpected(std::string("SDL_Init failed: ") + SDL_GetError());
+    return fail(std::string("SDL_Init failed: ") + SDL_GetError());
 
   apply_hints(kPostInitHints);
 
@@ -379,10 +413,21 @@ static Result init_sdl(SdlContext* sdl) {
   return {};
 }
 
-std::expected<void, std::string> RdpSession::run(rdpFile* file, const std::string& password) {
+static SessionError classify_exit(rdpContext* context, int exit_code) {
+  UINT32 error = freerdp_get_last_error(context);
+  if (exit_code == ERRCONNECT_LOGON_FAILURE || error == FREERDP_ERROR_CONNECT_LOGON_FAILURE)
+    return SessionError::kLogonFailure;
+  if (error == FREERDP_ERROR_CONNECT_CANCELLED)
+    return SessionError::kUserDisconnect;
+  return SessionError::kGeneral;
+}
+
+std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
+                                                    const std::string& password,
+                                                    const SessionOptions& opts) {
   std::unique_ptr<sdl_rdp_context, void (*)(sdl_rdp_context*)> owner(nullptr, context_free);
 
-  if (auto r = init_freerdp(file, password, owner); !r)
+  if (auto r = init_freerdp(file, password, opts, owner); !r)
     return r;
 
   auto* sdl = owner->sdl;
@@ -391,6 +436,8 @@ std::expected<void, std::string> RdpSession::run(rdpFile* file, const std::strin
     return r;
 
   auto cleanup = [&]() {
+    std::ignore = sdl->setGrabMouse(false);
+    std::ignore = sdl->setGrabKeyboard(false);
     sdl->cleanup();
     freerdp_del_signal_cleanup_handler(sdl->context(), sdl_term_handler);
     SDL_Quit();
@@ -398,31 +445,34 @@ std::expected<void, std::string> RdpSession::run(rdpFile* file, const std::strin
 
   if (!sdl->detectDisplays()) {
     cleanup();
-    return std::unexpected("Failed to detect displays");
+    return fail("Failed to detect displays");
   }
 
   auto* context = sdl->context();
 
   if (!stream_dump_register_handlers(context, CONNECTION_STATE_MCS_CREATE_REQUEST, FALSE)) {
     cleanup();
-    return std::unexpected("Failed to register stream handlers");
+    return fail("Failed to register stream handlers");
   }
 
   if (freerdp_client_start(context) != 0) {
     cleanup();
-    return std::unexpected("Failed to start RDP connection");
+    return fail("Failed to start RDP connection");
   }
 
-  int rc = event_loop(sdl);
+  int rc = event_loop(sdl, opts.host_keys);
 
   if (freerdp_client_stop(context) != 0)
     rc = -1;
-  if (sdl->exitCode() != 0)
-    rc = sdl->exitCode();
 
+  int exit_code = sdl->exitCode();
   cleanup();
 
-  if (rc != 0)
-    return std::unexpected("RDP session ended with error");
+  if (rc != 0 || exit_code != 0) {
+    auto code = classify_exit(context, exit_code);
+    if (code == SessionError::kUserDisconnect)
+      return {};
+    return fail(code, "RDP session ended with error (exit code " + std::to_string(exit_code) + ")");
+  }
   return {};
 }

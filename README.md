@@ -52,16 +52,31 @@ fiRDP -qc session.rdp
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-|---|---|
-| Alt+Break | Toggle fullscreen |
-| Ctrl+Alt+Break | Disconnect |
+| Linux | macOS | Action |
+|---|---|---|
+| Ctrl+Alt+F11 | Cmd+Alt+F11 | Toggle fullscreen |
+| Ctrl+Alt+F4 | Cmd+Alt+F4 | Disconnect |
 
 ## Configuration
 
-Config file: `~/.config/fiRDP/config.json` (created automatically on first run).
+Config file: `~/.config/freerdp/sdl-freerdp.json` (created automatically on first run).
 
-The config controls FreeRDP's SDL hotkey system. By default, FreeRDP hotkeys are disabled (only the hardcoded shortcuts above work). To enable additional FreeRDP hotkeys:
+### Host keys
+
+By default, all key presses are forwarded to the remote session. The `host_keys` option lets you specify key combinations that should be kept for the host OS instead:
+
+```json
+{
+    "SDL_KeyModMask": ["KMOD_NONE"],
+    "host_keys": ["Super+Q", "Super+Tab", "Alt+F4"]
+}
+```
+
+Supported modifiers: `Ctrl`, `Alt`, `Shift`, `Super` (aliases: `Win`, `Cmd`, `Gui`). Key names use SDL naming (e.g. `Q`, `Tab`, `F4`, `Escape`, `Return`, `Space`).
+
+### FreeRDP hotkeys
+
+The config also controls FreeRDP's SDL hotkey system. By default, FreeRDP hotkeys are disabled (only the hardcoded shortcuts above work). To enable additional FreeRDP hotkeys:
 
 ```json
 {
@@ -77,8 +92,9 @@ fiRDP reuses FreeRDP's SDL3 client code (`client/SDL/SDL3/`) for connection mana
 src/
   main.cpp              CLI, argument parsing, password prompt, config
   rdp_file.hpp/cpp      .rdp file parser and validator
-  password_store.hpp/cpp  libsecret keyring integration
+  password_store.hpp/cpp  libsecret/Keychain keyring integration
   rdp_connection.hpp/cpp  SDL/FreeRDP session manager
+  host_keys.hpp/cpp       Host key passthrough config and matching
   fi_dialogs.cpp          No-op dialog callbacks
   fi_dialog_stubs.cpp     Stub connection dialog wrapper
   sdl_config.hpp          Client metadata constants

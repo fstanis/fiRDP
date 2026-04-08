@@ -23,21 +23,40 @@
 #include <sdl_prefs.hpp>
 #include <string>
 
+#ifdef __APPLE__
+#include <ApplicationServices/ApplicationServices.h>
+
+static bool check_accessibility(bool prompt) {
+  CFStringRef key = kAXTrustedCheckOptionPrompt;
+  CFBooleanRef value = prompt ? kCFBooleanTrue : kCFBooleanFalse;
+  CFDictionaryRef opts = CFDictionaryCreate(
+      nullptr, reinterpret_cast<const void**>(&key), reinterpret_cast<const void**>(&value), 1, nullptr, nullptr);
+  bool result = AXIsProcessTrustedWithOptions(opts);
+  CFRelease(opts);
+  return result;
+}
+#else
+static bool check_accessibility([[maybe_unused]] bool prompt) {
+  return true;
+}
+#endif
+
+#include "host_keys.hpp"
 #include "password_store.hpp"
 #include "rdp_connection.hpp"
 #include "rdp_file.hpp"
 
 namespace {
 
-constexpr const char* kConfigDir = "fiRDP";
-constexpr const char* kConfigFile = "config.json";
 constexpr const char* kDefaultConfig = R"({
-  "SDL_KeyModMask": ["KMOD_NONE"]
+  "SDL_KeyModMask": ["KMOD_NONE"],
+  "host_keys": []
 })";
 
 struct Args {
   bool auto_connect = false;
   bool quiet = false;
+  bool grab_keyboard = false;
   std::string rdp_path;
 };
 
@@ -61,9 +80,10 @@ std::string read_password(const std::string& prompt) {
 void usage(const char* prog) {
   std::cerr << "Usage: " << prog << " [options] <file.rdp>\n"
             << "\nOptions:\n"
-            << "  -c, --connect    Connect immediately (skip confirmation)\n"
-            << "  -q, --quiet      Suppress connection info output\n"
-            << "  -h, --help       Show this help\n";
+            << "  -c, --connect         Connect immediately (skip confirmation)\n"
+            << "  -q, --quiet           Suppress connection info output\n"
+            << "  -g, --grab-keyboard   Grab keyboard (requires Accessibility on macOS)\n"
+            << "  -h, --help            Show this help\n";
 }
 
 Args parse_args(int argc, char* argv[]) {
@@ -74,6 +94,8 @@ Args parse_args(int argc, char* argv[]) {
       args.auto_connect = true;
     else if (arg == "-q" || arg == "--quiet")
       args.quiet = true;
+    else if (arg == "-g" || arg == "--grab-keyboard")
+      args.grab_keyboard = true;
     else if (arg == "-h" || arg == "--help") {
       usage(argv[0]);
       std::exit(0);
@@ -92,15 +114,14 @@ Args parse_args(int argc, char* argv[]) {
 }
 
 void init_config() {
-  auto config_dir = std::filesystem::path(getenv("HOME")) / ".config" / kConfigDir;
-  auto config_path = config_dir / kConfigFile;
+  auto config_path = std::filesystem::path(SdlPref::instance()->get_pref_file());
 
   if (!std::filesystem::exists(config_path)) {
-    std::filesystem::create_directories(config_dir);
+    std::filesystem::create_directories(config_path.parent_path());
     std::ofstream(config_path) << kDefaultConfig;
+    // Re-initialize SdlPref so it picks up the new file.
+    std::ignore = SdlPref::instance(config_path.string());
   }
-
-  std::ignore = SdlPref::instance(config_path.string());
 }
 
 }  // namespace
@@ -135,18 +156,30 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  if (args.grab_keyboard && !check_accessibility(true)) {
+    std::cerr << "Waiting for Accessibility permission (grant it in the dialog or System Settings)...\n";
+    while (!check_accessibility(false))
+      usleep(500000);
+    std::cerr << "Accessibility permission granted.\n";
+  }
+
   if (!args.auto_connect) {
     std::cerr << "\nPress Enter to connect (or Ctrl+C to cancel)...";
     std::string dummy;
     std::getline(std::cin, dummy);
   }
 
-  PasswordStore::store(server, username, password);
+  auto host_keys = parse_host_keys(SdlPref::instance()->get_array("host_keys"));
 
-  auto result = RdpSession::run(rdp->handle(), password);
+  auto result = RdpSession::run(rdp->handle(), password, {.grab_keyboard = args.grab_keyboard, .host_keys = host_keys});
   if (!result) {
-    std::cerr << "Error: " << result.error() << '\n';
+    auto& [code, message] = result.error();
+    std::cerr << "Error: " << message << '\n';
+    if (code == SessionError::kLogonFailure)
+      PasswordStore::remove(server, username);
     return 1;
   }
+
+  PasswordStore::store(server, username, password);
   return 0;
 }

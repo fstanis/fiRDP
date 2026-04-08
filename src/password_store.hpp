@@ -22,4 +22,5 @@ class PasswordStore {
  public:
   static std::string lookup(const std::string& server, const std::string& username);
   static void store(const std::string& server, const std::string& username, const std::string& password);
+  static void remove(const std::string& server, const std::string& username);
 };
