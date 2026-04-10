@@ -52,10 +52,10 @@ fiRDP -qc session.rdp
 
 ## Keyboard Shortcuts
 
-| Linux | macOS | Action |
-|---|---|---|
-| Ctrl+Alt+F11 | Cmd+Alt+F11 | Toggle fullscreen |
-| Ctrl+Alt+F4 | Cmd+Alt+F4 | Disconnect |
+| Shortcut | Action |
+|---|---|
+| Shift+F11 | Toggle fullscreen |
+| Shift+F12 | Disconnect |
 
 ## Configuration
 

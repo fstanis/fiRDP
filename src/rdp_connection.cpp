@@ -210,19 +210,11 @@ static void SDLCALL sdl_log_bridge(void* userdata, int category, SDL_LogPriority
 // Event loop helpers
 
 static bool is_disconnect_shortcut(const SDL_Event& ev, SDL_Keymod mods) {
-#ifdef __APPLE__
-  return (mods & SDL_KMOD_GUI) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F4;
-#else
-  return (mods & SDL_KMOD_CTRL) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F4;
-#endif
+  return (mods & SDL_KMOD_SHIFT) && ev.key.scancode == SDL_SCANCODE_F12;
 }
 
 static bool is_fullscreen_shortcut(const SDL_Event& ev, SDL_Keymod mods) {
-#ifdef __APPLE__
-  return (mods & SDL_KMOD_GUI) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F11;
-#else
-  return (mods & SDL_KMOD_CTRL) && (mods & SDL_KMOD_ALT) && ev.key.scancode == SDL_SCANCODE_F11;
-#endif
+  return (mods & SDL_KMOD_SHIFT) && ev.key.scancode == SDL_SCANCODE_F11;
 }
 
 static void handle_key_event(SdlContext* sdl, const SDL_Event& ev) {
