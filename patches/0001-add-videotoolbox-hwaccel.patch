@@ -1,0 +1,133 @@
+diff --git a/libfreerdp/codec/h264_ffmpeg.c b/libfreerdp/codec/h264_ffmpeg.c
+index 98b8b5e66..d8395099e 100644
+--- a/libfreerdp/codec/h264_ffmpeg.c
++++ b/libfreerdp/codec/h264_ffmpeg.c
+@@ -28,6 +28,13 @@
+ 
+ #include "h264.h"
+ 
++#ifdef __APPLE__
++#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(55, 9, 0)
++#include <libavutil/hwcontext.h>
++#define WITH_VIDEOTOOLBOX
++#endif
++#endif
++
+ #ifdef WITH_VAAPI
+ #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(55, 9, 0)
+ #include <libavutil/hwcontext.h>
+@@ -65,6 +72,10 @@ static inline char* error_string(char* errbuf, size_t errbuf_size, int errnum)
+ #define av_err2str(errnum) error_string((char[64]){ 0 }, 64, errnum)
+ #endif
+ 
++#if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING) || defined(WITH_VIDEOTOOLBOX)
++#define WITH_HW_ACCEL
++#endif
++
+ #if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING)
+ #define VAAPI_DEVICE "/dev/dri/renderD128"
+ #endif
+@@ -81,7 +92,7 @@ typedef struct
+ 	AVPacket bufferpacket;
+ #endif
+ 	AVPacket* packet;
+-#if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING)
++#ifdef WITH_HW_ACCEL
+ 	AVBufferRef* hwctx;
+ 	AVFrame* hwVideoFrame;
+ 	enum AVPixelFormat hw_pix_fmt;
+@@ -293,7 +304,7 @@ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+ 
+ 	sys->videoFrame->format = AV_PIX_FMT_YUV420P;
+ 
+-#ifdef WITH_VAAPI
++#ifdef WITH_HW_ACCEL
+ 		status = avcodec_receive_frame(sys->codecDecoderContext,
+ 		                               sys->hwctx ? sys->hwVideoFrame : sys->videoFrame);
+ #else
+@@ -307,7 +318,7 @@ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+ 
+ 	gotFrame = (status == 0);
+ #else
+-#ifdef WITH_VAAPI
++#ifdef WITH_HW_ACCEL
+ 	status =
+ 	    avcodec_decode_video2(sys->codecDecoderContext,
+ 	                          sys->hwctx ? sys->hwVideoFrame : sys->videoFrame, &gotFrame, packet);
+@@ -321,7 +332,7 @@ static int libavcodec_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+ 		goto fail;
+ 	}
+ 
+-#ifdef WITH_VAAPI
++#ifdef WITH_HW_ACCEL
+ 
+ 	if (sys->hwctx)
+ 	{
+@@ -561,7 +572,7 @@ static void libavcodec_uninit(H264_CONTEXT* h264)
+ #endif
+ 	}
+ 
+-#if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING)
++#ifdef WITH_HW_ACCEL
+ 	if (sys->hwVideoFrame)
+ 	{
+ #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(55, 18, 102)
+@@ -601,7 +612,7 @@ static void libavcodec_uninit(H264_CONTEXT* h264)
+ 	h264->pSystemData = nullptr;
+ }
+ 
+-#ifdef WITH_VAAPI
++#ifdef WITH_HW_ACCEL
+ static enum AVPixelFormat libavcodec_get_format(struct AVCodecContext* ctx,
+                                                 const enum AVPixelFormat* fmts)
+ {
+@@ -727,6 +738,31 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 	fail_hwdevice_create:
+ #endif
+ 
++#ifdef WITH_VIDEOTOOLBOX
++
++		if (!sys->hwctx)
++		{
++			int ret = av_hwdevice_ctx_create(&sys->hwctx, AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
++			                                 nullptr, nullptr, 0);
++
++			if (ret < 0)
++			{
++				WLog_Print(h264->log, WLOG_ERROR,
++				           "Could not initialize VideoToolbox decoder, falling back to software: %s",
++				           av_err2str(ret));
++				sys->hwctx = nullptr;
++				goto fail_vt_create;
++			}
++		}
++		WLog_Print(h264->log, WLOG_INFO, "Using VideoToolbox for accelerated H264 decoding");
++
++		sys->codecDecoderContext->get_format = libavcodec_get_format;
++		sys->hw_pix_fmt = AV_PIX_FMT_VIDEOTOOLBOX;
++		sys->codecDecoderContext->hw_device_ctx = av_buffer_ref(sys->hwctx);
++		sys->codecDecoderContext->opaque = (void*)h264;
++	fail_vt_create:
++#endif
++
+ 		if (avcodec_open2(sys->codecDecoderContext, sys->codecDecoder, nullptr) < 0)
+ 		{
+ 			WLog_Print(h264->log, WLOG_ERROR, "Failed to open libav codec");
+@@ -779,7 +815,7 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 
+ #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(55, 18, 102)
+ 	sys->videoFrame = av_frame_alloc();
+-#if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING)
++#ifdef WITH_HW_ACCEL
+ 	sys->hwVideoFrame = av_frame_alloc();
+ #endif
+ #else
+@@ -792,7 +828,7 @@ static BOOL libavcodec_init(H264_CONTEXT* h264)
+ 		goto EXCEPTION;
+ 	}
+ 
+-#if defined(WITH_VAAPI) || defined(WITH_VAAPI_H264_ENCODING)
++#ifdef WITH_HW_ACCEL
+ 	if (!sys->hwVideoFrame)
+ 	{
+ 		WLog_Print(h264->log, WLOG_ERROR, "Failed to allocate libav hw frame");
