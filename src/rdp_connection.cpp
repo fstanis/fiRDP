@@ -20,6 +20,10 @@
 
 #include "rdp_connection.hpp"
 
+#ifdef __APPLE__
+#include <CoreGraphics/CoreGraphics.h>
+#endif
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_video.h>
@@ -48,6 +52,18 @@
 #include "sdl_utils.hpp"
 
 #define TAG CLIENT_TAG("fiRDP")
+
+#ifdef __APPLE__
+// CGEventTap intercepts key events before macOS processes system shortcuts
+// (Mission Control, Spotlight, etc.) and re-posts them to our process so SDL
+// still receives them. Requires Accessibility permission.
+static CGEventRef event_tap_callback(CGEventTapProxy, CGEventType type, CGEventRef event, void*) {
+  if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput)
+    return event;
+  CGEventPost(kCGAnnotatedSessionEventTap, event);
+  return nullptr;
+}
+#endif
 
 // SDL hints applied before SDL_Init
 static constexpr struct {
@@ -315,6 +331,14 @@ static int event_loop(SdlContext* sdl, const std::vector<HostKey>& host_keys) {
           case SDL_EVENT_QUIT:
             std::ignore = freerdp_abort_connect_context(sdl->context());
             break;
+          case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
+              if (auto* w = sdl->getWindowForId(ev.window.windowID))
+                std::ignore = w->grabKeyboard(true);
+            }
+            if (!sdl->handleEvent(ev))
+              throw ConnectionError{-1, "handleEvent"};
+            break;
           case SDL_EVENT_KEY_DOWN:
             handle_key_event(sdl, ev);
             if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
@@ -460,7 +484,35 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     return fail("Failed to start RDP connection");
   }
 
+#ifdef __APPLE__
+  CFMachPortRef event_tap = nullptr;
+  CFRunLoopSourceRef tap_source = nullptr;
+  if (opts.grab_keyboard) {
+    event_tap = CGEventTapCreate(kCGSessionEventTap,
+                                 kCGHeadInsertEventTap,
+                                 kCGEventTapOptionDefault,
+                                 CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp),
+                                 event_tap_callback,
+                                 nullptr);
+    if (event_tap) {
+      tap_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, event_tap, 0);
+      CFRunLoopAddSource(CFRunLoopGetCurrent(), tap_source, kCFRunLoopCommonModes);
+    } else {
+      WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
+    }
+  }
+#endif
+
   int rc = event_loop(sdl, opts.host_keys);
+
+#ifdef __APPLE__
+  if (tap_source) {
+    CFRunLoopRemoveSource(CFRunLoopGetCurrent(), tap_source, kCFRunLoopCommonModes);
+    CFRelease(tap_source);
+  }
+  if (event_tap)
+    CFRelease(event_tap);
+#endif
 
   if (freerdp_client_stop(context) != 0)
     rc = -1;
