@@ -85,6 +85,7 @@ add_executable(fiRDP
     src/password_store.cpp
     src/rdp_connection.cpp
     src/host_keys.cpp
+    src/gpu_renderer.cpp
     src/fi_dialogs.cpp
     src/fi_dialog_stubs.cpp
     ${SDL3_CLIENT_SOURCES}

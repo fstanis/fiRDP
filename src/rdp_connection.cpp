@@ -46,8 +46,7 @@
 #include <string>
 #include <vector>
 
-#include "dialogs/sdl_connection_dialog_hider.hpp"
-#include "dialogs/sdl_dialogs.hpp"
+#include "gpu_renderer.hpp"
 #include "sdl_context.hpp"
 #include "sdl_utils.hpp"
 
@@ -72,7 +71,6 @@ static constexpr struct {
 } kPreInitHints[] = {
 #ifndef __APPLE__
     {SDL_HINT_VIDEO_DRIVER, "wayland"},
-    {SDL_HINT_VIDEO_DOUBLE_BUFFER, "1"},
 #endif
 };
 
@@ -83,13 +81,10 @@ static constexpr struct {
 } kPostInitHints[] = {
     {SDL_HINT_RENDER_GPU_LOW_POWER, "0"},
     {SDL_HINT_RENDER_VSYNC, "0"},
-    {SDL_HINT_FRAMEBUFFER_ACCELERATION, "1"},
     {SDL_HINT_VIDEO_SYNC_WINDOW_OPERATIONS, "0"},
     {SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "0"},
     {SDL_HINT_PEN_MOUSE_EVENTS, "0"},
     {SDL_HINT_TOUCH_MOUSE_EVENTS, "0"},
-    {SDL_HINT_PEN_TOUCH_EVENTS, "1"},
-    {SDL_HINT_TRACKPAD_IS_TOUCH_ONLY, "1"},
     {SDL_HINT_MOUSE_DPI_SCALE_CURSORS, "1"},
 };
 
@@ -232,138 +227,105 @@ static void handle_key_event(SdlContext* sdl, const SDL_Event& ev) {
   }
 }
 
-static void handle_user_event(SdlContext* sdl, const SDL_Event& ev) {
-  switch (ev.type) {
-    case SDL_EVENT_USER_CERT_DIALOG: {
-      SDLConnectionDialogHider hider(sdl);
-      if (!sdl_cert_dialog_show(static_cast<const char*>(ev.user.data1), static_cast<const char*>(ev.user.data2)))
-        throw ConnectionError{-1, "sdl_cert_dialog_show"};
-    } break;
-    case SDL_EVENT_USER_SHOW_DIALOG: {
-      SDLConnectionDialogHider hider(sdl);
-      if (!sdl_message_dialog_show(
-              static_cast<const char*>(ev.user.data1), static_cast<const char*>(ev.user.data2), ev.user.code))
-        throw ConnectionError{-1, "sdl_message_dialog_show"};
-    } break;
-    case SDL_EVENT_USER_SCARD_DIALOG: {
-      SDLConnectionDialogHider hider(sdl);
-      if (!sdl_scard_dialog_show(
-              static_cast<const char*>(ev.user.data1), ev.user.code, static_cast<const char**>(ev.user.data2)))
-        throw ConnectionError{-1, "sdl_scard_dialog_show"};
-    } break;
-    case SDL_EVENT_USER_AUTH_DIALOG: {
-      SDLConnectionDialogHider hider(sdl);
-      if (!sdl_auth_dialog_show(reinterpret_cast<const SDL_UserAuthArg*>(ev.padding)))
-        throw ConnectionError{-1, "sdl_auth_dialog_show"};
-    } break;
-    case SDL_EVENT_USER_UPDATE: {
-      std::vector<SDL_Rect> rects;
-      do {
-        rects = sdl->pop();
-        if (!sdl->drawToWindows(rects))
-          throw ConnectionError{-1, "drawToWindows"};
-      } while (!rects.empty());
-    } break;
-    case SDL_EVENT_USER_CREATE_WINDOWS:
-      if (!static_cast<SdlContext*>(ev.user.data1)->createWindows())
-        throw ConnectionError{-1, "createWindows"};
-      break;
-    case SDL_EVENT_USER_WINDOW_RESIZEABLE:
-      if (auto* w = static_cast<SdlWindow*>(ev.user.data1))
-        w->resizeable(ev.user.code != 0);
-      break;
-    case SDL_EVENT_USER_WINDOW_FULLSCREEN:
-      if (auto* w = static_cast<SdlWindow*>(ev.user.data1))
-        w->fullscreen(ev.user.code != 0, ev.user.data2 != nullptr);
-      break;
-    case SDL_EVENT_USER_WINDOW_MINIMIZE:
-      if (!sdl->minimizeAllWindows())
-        throw ConnectionError{-1, "minimizeAllWindows"};
-      break;
-    case SDL_EVENT_USER_POINTER_NULL:
-      if (!sdl->setCursor(SdlContext::CURSOR_NULL))
-        throw ConnectionError{-1, "setCursor(NULL)"};
-      break;
-    case SDL_EVENT_USER_POINTER_DEFAULT:
-      if (!sdl->setCursor(SdlContext::CURSOR_DEFAULT))
-        throw ConnectionError{-1, "setCursor(DEFAULT)"};
-      break;
-    case SDL_EVENT_USER_POINTER_POSITION: {
-      auto x = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data1)));
-      auto y = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data2)));
-      if (!sdl->moveMouseTo({x, y}))
-        throw ConnectionError{-1, "moveMouseTo"};
-    } break;
-    case SDL_EVENT_USER_POINTER_SET:
-      if (!sdl->setCursor(static_cast<rdpPointer*>(ev.user.data1)))
-        throw ConnectionError{-1, "setCursor(IMAGE)"};
-      break;
-    default:
-      break;
-  }
-}
+static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
+  const auto& host_keys = opts.host_keys;
+  GpuRenderer gpu;
 
-static int event_loop(SdlContext* sdl, const std::vector<HostKey>& host_keys) {
   try {
     while (!sdl->shallAbort()) {
       SDL_Event ev = {};
-      while (!sdl->shallAbort() && SDL_WaitEventTimeout(nullptr, 1000)) {
-        if (SDL_PeepEvents(&ev, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_USER_RETRY_DIALOG) < 0) {
-          if (sdl_log_error(-1, sdl->getWLog(), "SDL_PeepEvents"))
-            continue;
-        }
+      if (!SDL_WaitEventTimeout(&ev, 1000))
+        continue;
 
-        if (sdl->shallAbort(true))
-          continue;
+      if (sdl->shallAbort(true))
+        continue;
 
-        if (sdl->getDialog().handleEvent(ev))
-          continue;
+      if (sdl->getDialog().handleEvent(ev))
+        continue;
 
-        switch (ev.type) {
-          case SDL_EVENT_QUIT:
-            std::ignore = freerdp_abort_connect_context(sdl->context());
+      switch (ev.type) {
+        case SDL_EVENT_QUIT:
+          std::ignore = freerdp_abort_connect_context(sdl->context());
+          break;
+        case SDL_EVENT_KEY_DOWN:
+          handle_key_event(sdl, ev);
+          if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
             break;
-          case SDL_EVENT_WINDOW_FOCUS_GAINED:
-            if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
-              if (auto* w = sdl->getWindowForId(ev.window.windowID))
-                std::ignore = w->grabKeyboard(true);
-            }
-            if (!sdl->handleEvent(ev))
-              throw ConnectionError{-1, "handleEvent"};
+          if (!sdl->handleEvent(ev))
+            throw ConnectionError{-1, "handleEvent"};
+          break;
+        case SDL_EVENT_KEY_UP:
+          if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
             break;
-          case SDL_EVENT_KEY_DOWN:
-            handle_key_event(sdl, ev);
-            if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
-              break;
-            if (!sdl->handleEvent(ev))
-              throw ConnectionError{-1, "handleEvent"};
-            break;
-          case SDL_EVENT_KEY_UP:
-            if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
-              break;
-            if (!sdl->handleEvent(ev))
-              throw ConnectionError{-1, "handleEvent"};
-            break;
-          case SDL_EVENT_USER_CERT_DIALOG:
-          case SDL_EVENT_USER_SHOW_DIALOG:
-          case SDL_EVENT_USER_SCARD_DIALOG:
-          case SDL_EVENT_USER_AUTH_DIALOG:
-          case SDL_EVENT_USER_UPDATE:
-          case SDL_EVENT_USER_CREATE_WINDOWS:
-          case SDL_EVENT_USER_WINDOW_RESIZEABLE:
-          case SDL_EVENT_USER_WINDOW_FULLSCREEN:
-          case SDL_EVENT_USER_WINDOW_MINIMIZE:
-          case SDL_EVENT_USER_POINTER_NULL:
-          case SDL_EVENT_USER_POINTER_DEFAULT:
-          case SDL_EVENT_USER_POINTER_POSITION:
-          case SDL_EVENT_USER_POINTER_SET:
-            handle_user_event(sdl, ev);
-            break;
-          default:
-            if (!sdl->handleEvent(ev))
-              throw ConnectionError{-1, "handleEvent"};
-            break;
-        }
+          if (!sdl->handleEvent(ev))
+            throw ConnectionError{-1, "handleEvent"};
+          break;
+        case SDL_EVENT_USER_POINTER_NULL:
+          if (!sdl->setCursor(SdlContext::CURSOR_NULL))
+            throw ConnectionError{-1, "setCursor(NULL)"};
+          break;
+        case SDL_EVENT_USER_POINTER_DEFAULT:
+          if (!sdl->setCursor(SdlContext::CURSOR_DEFAULT))
+            throw ConnectionError{-1, "setCursor(DEFAULT)"};
+          break;
+        case SDL_EVENT_USER_POINTER_SET:
+          if (!sdl->setCursor(static_cast<rdpPointer*>(ev.user.data1)))
+            throw ConnectionError{-1, "setCursor(IMAGE)"};
+          break;
+        case SDL_EVENT_USER_POINTER_POSITION: {
+          auto x = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data1)));
+          auto y = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data2)));
+          if (!sdl->moveMouseTo({x, y}))
+            throw ConnectionError{-1, "moveMouseTo"};
+        } break;
+        case SDL_EVENT_USER_CREATE_WINDOWS: {
+          if (!static_cast<SdlContext*>(ev.user.data1)->createWindows())
+            throw ConnectionError{-1, "createWindows"};
+          // Init GPU renderer on the first window before any surface calls.
+          auto* first = sdl->getFirstWindow();
+          if (first && !gpu.init(first->window()))
+            throw ConnectionError{-1, "GPU renderer init"};
+        } break;
+        case SDL_EVENT_USER_UPDATE: {
+          // Drain all pending rects into one batch.
+          std::vector<SDL_Rect> all_rects;
+          std::vector<SDL_Rect> rects;
+          do {
+            rects = sdl->pop();
+            all_rects.insert(all_rects.end(), rects.begin(), rects.end());
+          } while (!rects.empty());
+
+          auto* gdi = sdl->context()->gdi;
+          if (gdi) {
+            gpu.draw_frame(gdi, all_rects.data(), static_cast<int>(all_rects.size()));
+            gpu.present();
+          }
+        } break;
+        case SDL_EVENT_USER_WINDOW_RESIZEABLE:
+          if (auto* w = static_cast<SdlWindow*>(ev.user.data1))
+            w->resizeable(ev.user.code != 0);
+          break;
+        case SDL_EVENT_USER_WINDOW_FULLSCREEN:
+          if (auto* w = static_cast<SdlWindow*>(ev.user.data1))
+            w->fullscreen(ev.user.code != 0, ev.user.data2 != nullptr);
+          break;
+        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+        case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+          // Intercept these to prevent FreeRDP from calling fill()/drawToWindow()
+          // which would enter SDL surface mode and conflict with our renderer.
+          break;
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+          if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
+            if (auto* w = sdl->getWindowForId(ev.window.windowID))
+              std::ignore = w->grabKeyboard(true);
+          }
+          if (!sdl->handleEvent(ev))
+            throw ConnectionError{-1, "handleEvent"};
+          break;
+        default:
+          if (!sdl->handleEvent(ev))
+            throw ConnectionError{-1, "handleEvent"};
+          break;
       }
     }
     return 0;
@@ -495,7 +457,7 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
   }
 #endif
 
-  int rc = event_loop(sdl, opts.host_keys);
+  int rc = event_loop(sdl, opts);
 
 #ifdef __APPLE__
   if (tap_source) {
