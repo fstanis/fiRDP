@@ -41,6 +41,9 @@ struct SessionFailure {
 
 struct SessionOptions {
   bool grab_keyboard = false;
+  bool native_scale = false;
+  bool prefer_h264 = false;
+  bool low_latency = false;
   std::vector<HostKey> host_keys;
 };
 

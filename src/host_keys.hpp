@@ -27,10 +27,6 @@ struct HostKey {
   SDL_Scancode scancode;
 };
 
-// Parses key combo strings like "Super+Q", "Alt+F4", "Ctrl+Shift+Escape".
-// Supported modifiers: Ctrl, Alt, Shift, Super (or Win/Cmd).
-// Returns empty vector element for unparseable strings (with warning to stderr).
 std::vector<HostKey> parse_host_keys(const std::vector<std::string>& specs);
 
-// Returns true if the given modifier state and scancode match any host key.
 bool is_host_key(const std::vector<HostKey>& keys, SDL_Keymod mods, SDL_Scancode scancode);

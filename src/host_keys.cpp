@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <sstream>
 
 namespace {
@@ -46,62 +47,68 @@ std::string to_lower(std::string s) {
   return s;
 }
 
+std::vector<std::string> split(const std::string& s, char delim) {
+  std::vector<std::string> parts;
+  std::istringstream ss(s);
+  std::string token;
+  while (std::getline(ss, token, delim)) {
+    parts.push_back(token);
+  }
+  return parts;
+}
+
+std::optional<SDL_Keymod> parse_modifiers(const std::vector<std::string>& parts) {
+  SDL_Keymod mods = SDL_KMOD_NONE;
+  for (size_t i = 0; i + 1 < parts.size(); i++) {
+    auto lower = to_lower(parts[i]);
+    bool found = false;
+    for (const auto& [name, mod] : kModNames) {
+      if (lower == name) {
+        mods = static_cast<SDL_Keymod>(mods | mod);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return std::nullopt;
+    }
+  }
+  return mods;
+}
+
 }  // namespace
 
 std::vector<HostKey> parse_host_keys(const std::vector<std::string>& specs) {
   std::vector<HostKey> result;
   for (const auto& spec : specs) {
-    SDL_Keymod mods = SDL_KMOD_NONE;
-    std::string key_name;
-
-    std::istringstream ss(spec);
-    std::string token;
-    std::vector<std::string> parts;
-    while (std::getline(ss, token, '+'))
-      parts.push_back(token);
-
+    auto parts = split(spec, '+');
     if (parts.empty()) {
       std::cerr << "Warning: empty host key spec, skipping\n";
       continue;
     }
 
-    // All tokens except the last are modifiers, last is the key
-    bool valid = true;
-    for (size_t i = 0; i + 1 < parts.size(); i++) {
-      auto lower = to_lower(parts[i]);
-      bool found = false;
-      for (const auto& [name, mod] : kModNames) {
-        if (lower == name) {
-          mods = static_cast<SDL_Keymod>(mods | mod);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        std::cerr << "Warning: unknown modifier '" << parts[i] << "' in host key '" << spec << "', skipping\n";
-        valid = false;
-        break;
-      }
-    }
-    if (!valid)
+    auto mods = parse_modifiers(parts);
+    if (!mods) {
+      std::cerr << "Warning: unknown modifier in host key '" << spec << "', skipping\n";
       continue;
+    }
 
-    key_name = parts.back();
-    auto scancode = SDL_GetScancodeFromName(key_name.c_str());
+    auto scancode = SDL_GetScancodeFromName(parts.back().c_str());
     if (scancode == SDL_SCANCODE_UNKNOWN) {
-      std::cerr << "Warning: unknown key '" << key_name << "' in host key '" << spec << "', skipping\n";
+      std::cerr << "Warning: unknown key '" << parts.back() << "' in host key '" << spec << "', skipping\n";
       continue;
     }
 
-    result.push_back({mods, scancode});
+    result.push_back({*mods, scancode});
   }
   return result;
 }
 
 bool is_host_key(const std::vector<HostKey>& keys, SDL_Keymod mods, SDL_Scancode scancode) {
   for (const auto& [key_mods, key_scancode] : keys) {
-    if (scancode == key_scancode && (mods & key_mods) == key_mods)
+    if (scancode == key_scancode && (mods & key_mods) == key_mods) {
       return true;
+    }
   }
   return false;
 }

@@ -19,23 +19,18 @@
 #include <SDL3/SDL.h>
 #include <freerdp/freerdp.h>
 
-// GPU-accelerated renderer using SDL_Renderer + SDL_Texture.
-// Replaces FreeRDP's CPU surface blitting to avoid Wayland blocking.
 class GpuRenderer {
  public:
   ~GpuRenderer();
 
-  // Initialize renderer for a window. Call after SDL_Init but before any
-  // SDL_GetWindowSurface calls (which would lock the window into surface mode).
   bool init(SDL_Window* window);
-
-  // Upload dirty regions from the GDI buffer and render the frame.
   void draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count);
-
-  // Present the frame.
   void present();
 
  private:
+  void ensure_texture(int width, int height);
+  void upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count);
+
   SDL_Renderer* renderer_ = nullptr;
   SDL_Texture* frame_tex_ = nullptr;
   int frame_w_ = 0;

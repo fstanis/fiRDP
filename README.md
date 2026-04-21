@@ -1,18 +1,12 @@
 # fiRDP
 
-A lightweight RDP client built on FreeRDP with hardware-accelerated decoding.
+A lightweight RDP client for Linux and macOS, built on FreeRDP and SDL3.
 
-Connects to RDP servers using SDL3 for rendering on Wayland, with VAAPI/FFmpeg hardware video decoding. Passwords are stored in the system keyring via libsecret.
+GPU-accelerated rendering via SDL3, hardware video decoding (VAAPI/FFmpeg on Linux, VideoToolbox on macOS), and system keyring integration for password storage.
 
 ## Building
 
-**Requirements:** clang, lld, cmake, SDL3, libsecret, and FreeRDP's build dependencies (openssl, ffmpeg, libusb, cups, jansson, etc.).
-
-```sh
-./build.sh
-```
-
-Or manually:
+Requirements: clang, lld, cmake, SDL3, and FreeRDP's build dependencies (openssl, ffmpeg, libusb, cups, jansson). On Linux: libsecret. On macOS: Xcode command line tools.
 
 ```sh
 git submodule update --init --recursive
@@ -20,35 +14,20 @@ cmake -B build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_BUI
 cmake --build build --target fiRDP -j$(nproc)
 ```
 
-The binary is at `build/fiRDP`.
-
-When making changes, run `clang-format -i src/*.cpp src/*.hpp` to apply formatting.
-
 ## Usage
 
 ```
 fiRDP [options] <file.rdp>
 
 Options:
-  -c, --connect    Connect immediately (skip confirmation)
-  -q, --quiet      Suppress connection info output
-  -h, --help       Show this help
+  -c, --connect         Connect immediately (skip confirmation)
+  -q, --quiet           Suppress connection info output
+  -g, --grab-keyboard   Grab keyboard (requires Accessibility on macOS)
+  -s, --native-scale    Override desktop scale factor with local display scale
+  -h, --help            Show this help
 ```
 
-Settings are loaded from the `.rdp` file. The password is retrieved from the system keyring if previously saved, otherwise prompted on the terminal. After a successful connection, the password is stored in the keyring for next time.
-
-Embedded passwords in `.rdp` files are rejected as insecure.
-
-```sh
-# Interactive (shows settings, prompts for password, waits for Enter)
-fiRDP session.rdp
-
-# Auto-connect (no confirmation prompt)
-fiRDP -c session.rdp
-
-# Quiet auto-connect
-fiRDP -qc session.rdp
-```
+Settings are loaded from the `.rdp` file. Passwords are retrieved from the system keyring (libsecret on Linux, Keychain on macOS) and stored after successful connections.
 
 ## Keyboard Shortcuts
 
@@ -59,11 +38,9 @@ fiRDP -qc session.rdp
 
 ## Configuration
 
-Config file: `~/.config/freerdp/sdl-freerdp.json` (created automatically on first run).
+Config file: `~/.config/freerdp/sdl-freerdp.json` (created on first run).
 
-### Host keys
-
-By default, all key presses are forwarded to the remote session. The `host_keys` option lets you specify key combinations that should be kept for the host OS instead:
+The `host_keys` option specifies key combinations kept for the host OS instead of forwarded to the remote session:
 
 ```json
 {
@@ -72,40 +49,8 @@ By default, all key presses are forwarded to the remote session. The `host_keys`
 }
 ```
 
-Supported modifiers: `Ctrl`, `Alt`, `Shift`, `Super` (aliases: `Win`, `Cmd`, `Gui`). Key names use SDL naming (e.g. `Q`, `Tab`, `F4`, `Escape`, `Return`, `Space`).
-
-### FreeRDP hotkeys
-
-The config also controls FreeRDP's SDL hotkey system. By default, FreeRDP hotkeys are disabled (only the hardcoded shortcuts above work). To enable additional FreeRDP hotkeys:
-
-```json
-{
-    "SDL_KeyModMask": ["KMOD_SHIFT"]
-}
-```
-
-## Architecture
-
-fiRDP reuses FreeRDP's SDL3 client code (`client/SDL/SDL3/`) for connection management, rendering, input, clipboard, and display handling. The SDL dialog system is replaced with stub implementations since all user interaction happens before connecting.
-
-```
-src/
-  main.cpp              CLI, argument parsing, password prompt, config
-  rdp_file.hpp/cpp      .rdp file parser and validator
-  password_store.hpp/cpp  libsecret/Keychain keyring integration
-  rdp_connection.hpp/cpp  SDL/FreeRDP session manager
-  host_keys.hpp/cpp       Host key passthrough config and matching
-  fi_dialogs.cpp          No-op dialog callbacks
-  fi_dialog_stubs.cpp     Stub connection dialog wrapper
-  sdl_config.hpp          Client metadata constants
-```
-
-FreeRDP is built as a static subdirectory via cmake. The `FreeRDP/` directory is only needed at build time.
+Modifiers: `Ctrl`, `Alt`, `Shift`, `Super` (aliases: `Win`, `Cmd`, `Gui`). Key names use SDL naming (e.g. `Q`, `Tab`, `F4`).
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or later - see the LICENSE file for details.
-
-### Third-Party Code
-
-This software includes code from FreeRDP, which is licensed under the Apache License 2.0. See [FreeRDP's LICENSE](FreeRDP/LICENSE) for the Apache 2.0 license terms and attributions.
+GPLv3 or later. Includes code from [FreeRDP](FreeRDP/LICENSE) (Apache 2.0).

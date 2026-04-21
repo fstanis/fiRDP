@@ -40,15 +40,17 @@ BOOL sdl_authenticate_ex(freerdp* instance, char** username, char** password, ch
     case AUTH_TLS:
     case AUTH_RDP:
     case AUTH_SMARTCARD_PIN:
-      if ((*username) && (*password))
+      if ((*username) && (*password)) {
         return TRUE;
+      }
       break;
     default:
       break;
   }
 
-  if (*username && *password)
+  if (*username && *password) {
     return TRUE;
+  }
 
   WLog_WARN(TAG, "Authentication requested but no credentials available (reason=%d)", reason);
   return FALSE;
@@ -60,8 +62,9 @@ BOOL sdl_choose_smartcard([[maybe_unused]] freerdp* instance,
                           DWORD* choice,
                           [[maybe_unused]] BOOL gateway) {
   WINPR_ASSERT(choice);
-  if (count == 0)
+  if (count == 0) {
     return FALSE;
+  }
   *choice = 0;
   return TRUE;
 }
@@ -123,11 +126,13 @@ DWORD sdl_verify_changed_certificate_ex([[maybe_unused]] freerdp* instance,
 }
 
 int sdl_logon_error_info(freerdp* instance, UINT32 data, UINT32 type) {
-  if (!instance || !instance->context)
+  if (!instance || !instance->context) {
     return -1;
+  }
 
-  if (type == LOGON_MSG_SESSION_CONTINUE)
+  if (type == LOGON_MSG_SESSION_CONTINUE) {
     return 0;
+  }
 
   const char* str_data = freerdp_get_logon_error_info_data(data);
   const char* str_type = freerdp_get_logon_error_info_type(type);
@@ -155,9 +160,18 @@ BOOL sdl_message_dialog_show([[maybe_unused]] const char* title,
 }
 
 BOOL sdl_auth_dialog_show(const SDL_UserAuthArg* args) {
-  char* user = args->user ? _strdup(args->user) : nullptr;
-  char* domain = args->domain ? _strdup(args->domain) : nullptr;
-  char* pwd = args->password ? _strdup(args->password) : nullptr;
+  char* user = nullptr;
+  if (args->user) {
+    user = _strdup(args->user);
+  }
+  char* domain = nullptr;
+  if (args->domain) {
+    domain = _strdup(args->domain);
+  }
+  char* pwd = nullptr;
+  if (args->password) {
+    pwd = _strdup(args->password);
+  }
   return sdl_push_user_event(SDL_EVENT_USER_AUTH_RESULT, user, domain, pwd, 1);
 }
 

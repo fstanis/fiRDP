@@ -28,7 +28,10 @@
 
 static bool check_accessibility(bool prompt) {
   CFStringRef key = kAXTrustedCheckOptionPrompt;
-  CFBooleanRef value = prompt ? kCFBooleanTrue : kCFBooleanFalse;
+  CFBooleanRef value = kCFBooleanFalse;
+  if (prompt) {
+    value = kCFBooleanTrue;
+  }
   CFDictionaryRef opts = CFDictionaryCreate(
       nullptr, reinterpret_cast<const void**>(&key), reinterpret_cast<const void**>(&value), 1, nullptr, nullptr);
   bool result = AXIsProcessTrustedWithOptions(opts);
@@ -57,6 +60,9 @@ struct Args {
   bool auto_connect = false;
   bool quiet = false;
   bool grab_keyboard = false;
+  bool native_scale = false;
+  bool prefer_h264 = false;
+  bool low_latency = false;
   std::string rdp_path;
 };
 
@@ -83,6 +89,9 @@ void usage(const char* prog) {
             << "  -c, --connect         Connect immediately (skip confirmation)\n"
             << "  -q, --quiet           Suppress connection info output\n"
             << "  -g, --grab-keyboard   Grab keyboard (requires Accessibility on macOS)\n"
+            << "  -s, --native-scale    Override desktop scale factor with local display scale\n"
+            << "      --prefer-h264     Hint server to prefer H.264 (GPU decode via VAAPI)\n"
+            << "      --low-latency     Send QoE feedback and suspend per-frame acks\n"
             << "  -h, --help            Show this help\n";
 }
 
@@ -90,21 +99,28 @@ Args parse_args(int argc, char* argv[]) {
   Args args;
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
-    if (arg == "-c" || arg == "--connect")
+    if (arg == "-c" || arg == "--connect") {
       args.auto_connect = true;
-    else if (arg == "-q" || arg == "--quiet")
+    } else if (arg == "-q" || arg == "--quiet") {
       args.quiet = true;
-    else if (arg == "-g" || arg == "--grab-keyboard")
+    } else if (arg == "-g" || arg == "--grab-keyboard") {
       args.grab_keyboard = true;
-    else if (arg == "-h" || arg == "--help") {
+    } else if (arg == "-s" || arg == "--native-scale") {
+      args.native_scale = true;
+    } else if (arg == "--prefer-h264") {
+      args.prefer_h264 = true;
+    } else if (arg == "--low-latency") {
+      args.low_latency = true;
+    } else if (arg == "-h" || arg == "--help") {
       usage(argv[0]);
       std::exit(0);
     } else if (arg[0] == '-') {
       std::cerr << "Unknown option: " << arg << '\n';
       usage(argv[0]);
       std::exit(1);
-    } else
+    } else {
       args.rdp_path = arg;
+    }
   }
   if (args.rdp_path.empty()) {
     usage(argv[0]);
@@ -119,67 +135,98 @@ void init_config() {
   if (!std::filesystem::exists(config_path)) {
     std::filesystem::create_directories(config_path.parent_path());
     std::ofstream(config_path) << kDefaultConfig;
-    // Re-initialize SdlPref so it picks up the new file.
     std::ignore = SdlPref::instance(config_path.string());
   }
+}
+
+std::unique_ptr<RdpFile> load_rdp_file(const std::string& path) {
+  try {
+    return RdpFile::parse(path);
+  } catch (const std::exception& e) {
+    std::cerr << "Error: " << e.what() << '\n';
+    std::exit(1);
+  }
+}
+
+std::string resolve_password(const std::string& server, const std::string& username, bool quiet) {
+  auto password = PasswordStore::lookup(server, username);
+  if (!quiet) {
+    if (password.empty()) {
+      std::cerr << std::left << std::setw(24) << "Password" << "(not saved)" << '\n';
+    } else {
+      std::cerr << std::left << std::setw(24) << "Password" << "****" << '\n';
+    }
+  }
+  if (!password.empty()) {
+    return password;
+  }
+  password = read_password("Password: ");
+  if (password.empty()) {
+    std::cerr << "Error: password required\n";
+    std::exit(1);
+  }
+  return password;
+}
+
+void wait_for_accessibility(bool grab_keyboard) {
+  if (!grab_keyboard || check_accessibility(true)) {
+    return;
+  }
+  std::cerr << "Waiting for Accessibility permission (grant it in the dialog or System Settings)...\n";
+  while (!check_accessibility(false)) {
+    usleep(500000);
+  }
+  std::cerr << "Accessibility permission granted.\n";
+}
+
+void confirm_connection(bool auto_connect) {
+  if (auto_connect) {
+    return;
+  }
+  std::cerr << "\nPress Enter to connect (or Ctrl+C to cancel)...";
+  std::string dummy;
+  std::getline(std::cin, dummy);
+}
+
+int run_session(RdpFile& rdp, const std::string& password, const SessionOptions& opts) {
+  auto result = RdpSession::run(rdp.handle(), password, opts);
+  if (result) {
+    PasswordStore::store(rdp.server(), rdp.username(), password);
+    return 0;
+  }
+  auto& [code, message] = result.error();
+  std::cerr << "Error: " << message << '\n';
+  if (code == SessionError::kLogonFailure) {
+    PasswordStore::remove(rdp.server(), rdp.username());
+  }
+  return 1;
+}
+
+void suppress_kerberos() {
+  setenv("KRB5_CONFIG", "/dev/null", 0);
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
+  suppress_kerberos();
   init_config();
   auto args = parse_args(argc, argv);
+  auto rdp = load_rdp_file(args.rdp_path);
 
-  std::unique_ptr<RdpFile> rdp;
-  try {
-    rdp = RdpFile::parse(args.rdp_path);
-  } catch (const std::exception& e) {
-    std::cerr << "Error: " << e.what() << '\n';
-    return 1;
-  }
-
-  if (!args.quiet)
+  if (!args.quiet) {
     rdp->print(std::cerr);
-
-  auto server = rdp->server();
-  auto username = rdp->username();
-
-  auto password = PasswordStore::lookup(server, username);
-  if (!args.quiet)
-    std::cerr << std::left << std::setw(24) << "Password" << (password.empty() ? "(not saved)" : "****") << '\n';
-
-  if (password.empty()) {
-    password = read_password("Password: ");
-    if (password.empty()) {
-      std::cerr << "Error: password required\n";
-      return 1;
-    }
   }
 
-  if (args.grab_keyboard && !check_accessibility(true)) {
-    std::cerr << "Waiting for Accessibility permission (grant it in the dialog or System Settings)...\n";
-    while (!check_accessibility(false))
-      usleep(500000);
-    std::cerr << "Accessibility permission granted.\n";
-  }
-
-  if (!args.auto_connect) {
-    std::cerr << "\nPress Enter to connect (or Ctrl+C to cancel)...";
-    std::string dummy;
-    std::getline(std::cin, dummy);
-  }
+  auto password = resolve_password(rdp->server(), rdp->username(), args.quiet);
+  wait_for_accessibility(args.grab_keyboard);
+  confirm_connection(args.auto_connect);
 
   auto host_keys = parse_host_keys(SdlPref::instance()->get_array("host_keys"));
-
-  auto result = RdpSession::run(rdp->handle(), password, {.grab_keyboard = args.grab_keyboard, .host_keys = host_keys});
-  if (!result) {
-    auto& [code, message] = result.error();
-    std::cerr << "Error: " << message << '\n';
-    if (code == SessionError::kLogonFailure)
-      PasswordStore::remove(server, username);
-    return 1;
-  }
-
-  PasswordStore::store(server, username, password);
-  return 0;
+  return run_session(*rdp, password,
+                     {.grab_keyboard = args.grab_keyboard,
+                      .native_scale = args.native_scale,
+                      .prefer_h264 = args.prefer_h264,
+                      .low_latency = args.low_latency,
+                      .host_keys = host_keys});
 }

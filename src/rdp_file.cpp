@@ -23,14 +23,16 @@
 
 std::unique_ptr<RdpFile> RdpFile::parse(const std::string& path) {
   std::ifstream file(path, std::ios::binary);
-  if (!file)
+  if (!file) {
     throw std::runtime_error("Cannot open " + path);
+  }
 
   std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
   auto* rdp = freerdp_client_rdp_file_new();
-  if (!rdp)
+  if (!rdp) {
     throw std::runtime_error("Failed to create RDP file object");
+  }
 
   if (!freerdp_client_parse_rdp_file_buffer_ex(
           rdp, reinterpret_cast<const BYTE*>(content.data()), content.size(), nullptr)) {
@@ -44,21 +46,25 @@ std::unique_ptr<RdpFile> RdpFile::parse(const std::string& path) {
 }
 
 void RdpFile::validate() const {
-  if (server().empty())
+  if (server().empty()) {
     throw std::runtime_error("Missing required field: full address");
-  if (username().empty())
+  }
+  if (username().empty()) {
     throw std::runtime_error("Missing required field: username");
-  if (has_password())
+  }
+  if (has_password()) {
     throw std::runtime_error(
         "Embedded passwords in .rdp files are not supported (insecure). "
         "Remove the password field and use the system keyring instead.");
+  }
 }
 
 RdpFile::RdpFile(rdpFile* file) : file_(file) {}
 
 RdpFile::~RdpFile() {
-  if (file_)
+  if (file_) {
     freerdp_client_rdp_file_free(file_);
+  }
 }
 
 std::string RdpFile::server() const {
@@ -83,7 +89,10 @@ int RdpFile::get_int(const char* name) const {
 
 std::string RdpFile::get_string(const char* name) const {
   const char* v = freerdp_client_rdp_file_get_string_option(file_, name);
-  return v ? v : "";
+  if (v) {
+    return v;
+  }
+  return "";
 }
 
 void RdpFile::print(std::ostream& out) const {
@@ -91,45 +100,51 @@ void RdpFile::print(std::ostream& out) const {
 
   auto str = [&](const char* label, const char* key) {
     auto v = get_string(key);
-    if (!v.empty())
+    if (!v.empty()) {
       out << std::left << std::setw(w) << label << v << '\n';
+    }
   };
   auto num = [&](const char* label, const char* key) {
     auto v = get_int(key);
-    if (v > 0)
+    if (v > 0) {
       out << std::left << std::setw(w) << label << v << '\n';
+    }
   };
   auto flag = [&](const char* label, const char* key) {
     auto v = get_int(key);
-    out << std::left << std::setw(w) << label << (v ? "yes" : "no") << '\n';
+    if (v) {
+      out << std::left << std::setw(w) << label << "yes" << '\n';
+    } else {
+      out << std::left << std::setw(w) << label << "no" << '\n';
+    }
   };
 
-  // Connection
   str("Server", "full address");
   str("Username", "username");
   str("Domain", "domain");
   str("Gateway", "gatewayhostname");
 
-  // Display
   num("Desktop Width", "desktopwidth");
   num("Desktop Height", "desktopheight");
   num("Color Depth", "session bpp");
   num("Scale Factor", "desktopscalefactor");
 
   auto mode = get_int("screen mode id");
-  out << std::left << std::setw(w) << "Screen Mode" << (mode == 2 ? "fullscreen" : "windowed") << '\n';
+  if (mode == 2) {
+    out << std::left << std::setw(w) << "Screen Mode" << "fullscreen" << '\n';
+  } else {
+    out << std::left << std::setw(w) << "Screen Mode" << "windowed" << '\n';
+  }
 
   flag("Multi Monitor", "use multimon");
   flag("Smart Sizing", "smartsizing");
 
-  // Performance
   num("Connection Type", "connection type");
   flag("Compression", "compression");
   flag("Bandwidth Auto-Detect", "bandwidthautodetect");
   flag("Network Auto-Detect", "networkautodetect");
   flag("Bitmap Cache", "bitmapcachepersistenable");
 
-  // Visual
   flag("Font Smoothing", "allow font smoothing");
   flag("Desktop Composition", "allow desktop composition");
   flag("Wallpaper", "disable wallpaper");
@@ -137,19 +152,16 @@ void RdpFile::print(std::ostream& out) const {
   flag("Full Window Drag", "disable full window drag");
   flag("Themes", "disable themes");
 
-  // Redirection
   flag("Clipboard", "redirectclipboard");
   flag("Printers", "redirectprinters");
   flag("Smart Cards", "redirectsmartcards");
   flag("COM Ports", "redirectcomports");
   flag("POS Devices", "redirectposdevices");
 
-  // Audio
   num("Audio Mode", "audiomode");
   flag("Audio Capture", "audiocapturemode");
   flag("Video Playback", "videoplaybackmode");
 
-  // Session
   flag("Auto Reconnect", "autoreconnection enabled");
   num("Auth Level", "authentication level");
   flag("Keyboard Hook", "keyboardhook");

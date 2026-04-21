@@ -53,18 +53,50 @@
 #define TAG CLIENT_TAG("fiRDP")
 
 #ifdef __APPLE__
-// CGEventTap intercepts key events before macOS processes system shortcuts
-// (Mission Control, Spotlight, etc.) and re-posts them to our process so SDL
-// still receives them. Requires Accessibility permission.
 static CGEventRef event_tap_callback(CGEventTapProxy, CGEventType type, CGEventRef event, void*) {
-  if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput)
+  if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
     return event;
+  }
   CGEventPost(kCGAnnotatedSessionEventTap, event);
   return nullptr;
 }
+
+struct EventTapGuard {
+  CFMachPortRef tap = nullptr;
+  CFRunLoopSourceRef source = nullptr;
+
+  explicit EventTapGuard(bool enabled) {
+    if (!enabled) {
+      return;
+    }
+    tap = CGEventTapCreate(kCGSessionEventTap,
+                           kCGHeadInsertEventTap,
+                           kCGEventTapOptionDefault,
+                           CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp),
+                           event_tap_callback,
+                           nullptr);
+    if (!tap) {
+      return;
+    }
+    source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+  }
+
+  ~EventTapGuard() {
+    if (source) {
+      CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+      CFRelease(source);
+    }
+    if (tap) {
+      CFRelease(tap);
+    }
+  }
+
+  EventTapGuard(const EventTapGuard&) = delete;
+  EventTapGuard& operator=(const EventTapGuard&) = delete;
+};
 #endif
 
-// SDL hints applied before SDL_Init
 static constexpr struct {
   const char* key;
   const char* value;
@@ -74,7 +106,6 @@ static constexpr struct {
 #endif
 };
 
-// SDL hints applied after SDL_Init
 static constexpr struct {
   const char* key;
   const char* value;
@@ -105,8 +136,6 @@ static void sdl_term_handler([[maybe_unused]] int signum,
   std::ignore = sdl_push_quit();
 }
 
-// FreeRDP client entry point callbacks
-
 static BOOL sdl_client_global_init() {
   return freerdp_handle_signals() == 0;
 }
@@ -114,16 +143,18 @@ static BOOL sdl_client_global_init() {
 static void sdl_client_global_uninit() {}
 
 static BOOL sdl_client_new(freerdp* instance, rdpContext* context) {
-  if (!instance || !context)
+  if (!instance || !context) {
     return FALSE;
+  }
   auto* ctx = reinterpret_cast<sdl_rdp_context*>(context);
   ctx->sdl = new SdlContext(context);
   return ctx->sdl != nullptr;
 }
 
 static void sdl_client_free([[maybe_unused]] freerdp* instance, rdpContext* context) {
-  if (!context)
+  if (!context) {
     return;
+  }
   delete reinterpret_cast<sdl_rdp_context*>(context)->sdl;
 }
 
@@ -150,11 +181,10 @@ static void register_entry_points(RDP_CLIENT_ENTRY_POINTS* ep) {
 }
 
 static void context_free(sdl_rdp_context* ctx) {
-  if (ctx)
+  if (ctx) {
     freerdp_client_context_free(&ctx->common.context);
+  }
 }
-
-// SDL log → WLog bridge
 
 static SDL_LogPriority wlog_to_sdl(DWORD level) {
   switch (level) {
@@ -198,11 +228,10 @@ static void SDLCALL sdl_log_bridge(void* userdata, int category, SDL_LogPriority
   auto* sdl = static_cast<SdlContext*>(userdata);
   const DWORD level = sdl_to_wlog(priority);
   auto* log = sdl->getWLog();
-  if (WLog_IsLevelActive(log, level))
+  if (WLog_IsLevelActive(log, level)) {
     WLog_PrintTextMessage(log, level, __LINE__, __FILE__, __func__, "[SDL:%d] %s", category, message);
+  }
 }
-
-// Event loop helpers
 
 static bool is_disconnect_shortcut(const SDL_Event& ev, SDL_Keymod mods) {
   return (mods & SDL_KMOD_SHIFT) && ev.key.scancode == SDL_SCANCODE_F12;
@@ -227,6 +256,27 @@ static void handle_key_event(SdlContext* sdl, const SDL_Event& ev) {
   }
 }
 
+static SDL_FPoint decode_pointer_position(const SDL_Event& ev) {
+  auto x = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data1)));
+  auto y = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data2)));
+  return {x, y};
+}
+
+static void drain_and_render(SdlContext* sdl, GpuRenderer& gpu) {
+  std::vector<SDL_Rect> all_rects;
+  std::vector<SDL_Rect> rects;
+  do {
+    rects = sdl->pop();
+    all_rects.insert(all_rects.end(), rects.begin(), rects.end());
+  } while (!rects.empty());
+
+  auto* gdi = sdl->context()->gdi;
+  if (gdi) {
+    gpu.draw_frame(gdi, all_rects.data(), static_cast<int>(all_rects.size()));
+    gpu.present();
+  }
+}
+
 static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
   const auto& host_keys = opts.host_keys;
   GpuRenderer gpu;
@@ -234,14 +284,17 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
   try {
     while (!sdl->shallAbort()) {
       SDL_Event ev = {};
-      if (!SDL_WaitEventTimeout(&ev, 1000))
+      if (!SDL_WaitEventTimeout(&ev, 1000)) {
         continue;
+      }
 
-      if (sdl->shallAbort(true))
+      if (sdl->shallAbort(true)) {
         continue;
+      }
 
-      if (sdl->getDialog().handleEvent(ev))
+      if (sdl->getDialog().handleEvent(ev)) {
         continue;
+      }
 
       switch (ev.type) {
         case SDL_EVENT_QUIT:
@@ -249,82 +302,83 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
           break;
         case SDL_EVENT_KEY_DOWN:
           handle_key_event(sdl, ev);
-          if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
+          if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode)) {
             break;
-          if (!sdl->handleEvent(ev))
+          }
+          if (!sdl->handleEvent(ev)) {
             throw ConnectionError{-1, "handleEvent"};
+          }
           break;
         case SDL_EVENT_KEY_UP:
-          if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode))
+          if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode)) {
             break;
-          if (!sdl->handleEvent(ev))
+          }
+          if (!sdl->handleEvent(ev)) {
             throw ConnectionError{-1, "handleEvent"};
+          }
           break;
         case SDL_EVENT_USER_POINTER_NULL:
-          if (!sdl->setCursor(SdlContext::CURSOR_NULL))
+          if (!sdl->setCursor(SdlContext::CURSOR_NULL)) {
             throw ConnectionError{-1, "setCursor(NULL)"};
+          }
           break;
         case SDL_EVENT_USER_POINTER_DEFAULT:
-          if (!sdl->setCursor(SdlContext::CURSOR_DEFAULT))
+          if (!sdl->setCursor(SdlContext::CURSOR_DEFAULT)) {
             throw ConnectionError{-1, "setCursor(DEFAULT)"};
+          }
           break;
         case SDL_EVENT_USER_POINTER_SET:
-          if (!sdl->setCursor(static_cast<rdpPointer*>(ev.user.data1)))
+          if (!sdl->setCursor(static_cast<rdpPointer*>(ev.user.data1))) {
             throw ConnectionError{-1, "setCursor(IMAGE)"};
+          }
           break;
         case SDL_EVENT_USER_POINTER_POSITION: {
-          auto x = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data1)));
-          auto y = static_cast<float>(static_cast<INT32>(reinterpret_cast<uintptr_t>(ev.user.data2)));
-          if (!sdl->moveMouseTo({x, y}))
+          auto pos = decode_pointer_position(ev);
+          if (!sdl->moveMouseTo(pos)) {
             throw ConnectionError{-1, "moveMouseTo"};
-        } break;
-        case SDL_EVENT_USER_CREATE_WINDOWS: {
-          if (!static_cast<SdlContext*>(ev.user.data1)->createWindows())
-            throw ConnectionError{-1, "createWindows"};
-          // Init GPU renderer on the first window before any surface calls.
-          auto* first = sdl->getFirstWindow();
-          if (first && !gpu.init(first->window()))
-            throw ConnectionError{-1, "GPU renderer init"};
-        } break;
-        case SDL_EVENT_USER_UPDATE: {
-          // Drain all pending rects into one batch.
-          std::vector<SDL_Rect> all_rects;
-          std::vector<SDL_Rect> rects;
-          do {
-            rects = sdl->pop();
-            all_rects.insert(all_rects.end(), rects.begin(), rects.end());
-          } while (!rects.empty());
-
-          auto* gdi = sdl->context()->gdi;
-          if (gdi) {
-            gpu.draw_frame(gdi, all_rects.data(), static_cast<int>(all_rects.size()));
-            gpu.present();
           }
-        } break;
+          break;
+        }
+        case SDL_EVENT_USER_CREATE_WINDOWS: {
+          if (!static_cast<SdlContext*>(ev.user.data1)->createWindows()) {
+            throw ConnectionError{-1, "createWindows"};
+          }
+          auto* first = sdl->getFirstWindow();
+          if (first && !gpu.init(first->window())) {
+            throw ConnectionError{-1, "GPU renderer init"};
+          }
+          break;
+        }
+        case SDL_EVENT_USER_UPDATE:
+          drain_and_render(sdl, gpu);
+          break;
         case SDL_EVENT_USER_WINDOW_RESIZEABLE:
-          if (auto* w = static_cast<SdlWindow*>(ev.user.data1))
+          if (auto* w = static_cast<SdlWindow*>(ev.user.data1)) {
             w->resizeable(ev.user.code != 0);
+          }
           break;
         case SDL_EVENT_USER_WINDOW_FULLSCREEN:
-          if (auto* w = static_cast<SdlWindow*>(ev.user.data1))
+          if (auto* w = static_cast<SdlWindow*>(ev.user.data1)) {
             w->fullscreen(ev.user.code != 0, ev.user.data2 != nullptr);
+          }
           break;
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-          // Intercept these to prevent FreeRDP from calling fill()/drawToWindow()
-          // which would enter SDL surface mode and conflict with our renderer.
           break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
           if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
-            if (auto* w = sdl->getWindowForId(ev.window.windowID))
+            if (auto* w = sdl->getWindowForId(ev.window.windowID)) {
               std::ignore = w->grabKeyboard(true);
+            }
           }
-          if (!sdl->handleEvent(ev))
+          if (!sdl->handleEvent(ev)) {
             throw ConnectionError{-1, "handleEvent"};
+          }
           break;
         default:
-          if (!sdl->handleEvent(ev))
+          if (!sdl->handleEvent(ev)) {
             throw ConnectionError{-1, "handleEvent"};
+          }
           break;
       }
     }
@@ -335,10 +389,10 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
   }
 }
 
-// Apply SDL hints from a table
 static void apply_hints(auto& table) {
-  for (const auto& [key, value] : table)
+  for (const auto& [key, value] : table) {
     SDL_SetHint(key, value);
+  }
 }
 
 using Result = std::expected<void, SessionFailure>;
@@ -359,27 +413,46 @@ static Result init_freerdp(rdpFile* file,
   register_entry_points(&ep);
 
   owner = {reinterpret_cast<sdl_rdp_context*>(freerdp_client_context_new(&ep)), context_free};
-  if (!owner)
+  if (!owner) {
     return fail("Failed to create FreeRDP context");
+  }
 
   auto* settings = owner->sdl->context()->settings;
 
-  if (!freerdp_client_populate_settings_from_rdp_file(file, settings))
+  if (!freerdp_client_populate_settings_from_rdp_file(file, settings)) {
     return fail("Failed to apply RDP file settings");
+  }
 
-  if (!password.empty())
+  if (!password.empty()) {
     freerdp_settings_set_string(settings, FreeRDP_Password, password.c_str());
+  }
 
   freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, TRUE);
-  freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, opts.grab_keyboard ? TRUE : FALSE);
+  if (opts.grab_keyboard) {
+    freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, TRUE);
+  } else {
+    freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, FALSE);
+  }
+
+  if (opts.prefer_h264) {
+    freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE);
+  }
+
+  if (opts.low_latency) {
+    freerdp_settings_set_bool(settings, FreeRDP_GfxSendQoeAck, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_GfxSuspendFrameAck, TRUE);
+  }
+
   return {};
 }
 
 static Result init_sdl(SdlContext* sdl) {
   apply_hints(kPreInitHints);
 
-  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
     return fail(std::string("SDL_Init failed: ") + SDL_GetError());
+  }
 
   apply_hints(kPostInitHints);
 
@@ -393,11 +466,23 @@ static Result init_sdl(SdlContext* sdl) {
 
 static SessionError classify_exit(rdpContext* context, int exit_code) {
   UINT32 error = freerdp_get_last_error(context);
-  if (exit_code == ERRCONNECT_LOGON_FAILURE || error == FREERDP_ERROR_CONNECT_LOGON_FAILURE)
+  if (exit_code == ERRCONNECT_LOGON_FAILURE || error == FREERDP_ERROR_CONNECT_LOGON_FAILURE) {
     return SessionError::kLogonFailure;
-  if (error == FREERDP_ERROR_CONNECT_CANCELLED)
+  }
+  if (error == FREERDP_ERROR_CONNECT_CANCELLED) {
     return SessionError::kUserDisconnect;
+  }
   return SessionError::kGeneral;
+}
+
+static void apply_native_scale(SdlContext* sdl) {
+  auto scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+  if (scale <= 0.0f) {
+    return;
+  }
+  auto pct = static_cast<UINT32>(scale * 100.0f);
+  freerdp_settings_set_uint32(sdl->context()->settings, FreeRDP_DesktopScaleFactor, pct);
+  WLog_Print(sdl->getWLog(), WLOG_INFO, "Overriding desktop scale factor to %u%%", pct);
 }
 
 std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
@@ -405,13 +490,15 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
                                                     const SessionOptions& opts) {
   std::unique_ptr<sdl_rdp_context, void (*)(sdl_rdp_context*)> owner(nullptr, context_free);
 
-  if (auto r = init_freerdp(file, password, opts, owner); !r)
+  if (auto r = init_freerdp(file, password, opts, owner); !r) {
     return r;
+  }
 
   auto* sdl = owner->sdl;
 
-  if (auto r = init_sdl(sdl); !r)
+  if (auto r = init_sdl(sdl); !r) {
     return r;
+  }
 
   auto cleanup = [&]() {
     std::ignore = sdl->setGrabMouse(false);
@@ -420,6 +507,10 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     freerdp_del_signal_cleanup_handler(sdl->context(), sdl_term_handler);
     SDL_Quit();
   };
+
+  if (opts.native_scale) {
+    apply_native_scale(sdl);
+  }
 
   if (!sdl->detectDisplays()) {
     cleanup();
@@ -439,46 +530,28 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
   }
 
 #ifdef __APPLE__
-  CFMachPortRef event_tap = nullptr;
-  CFRunLoopSourceRef tap_source = nullptr;
-  if (opts.grab_keyboard) {
-    event_tap = CGEventTapCreate(kCGSessionEventTap,
-                                 kCGHeadInsertEventTap,
-                                 kCGEventTapOptionDefault,
-                                 CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp),
-                                 event_tap_callback,
-                                 nullptr);
-    if (event_tap) {
-      tap_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, event_tap, 0);
-      CFRunLoopAddSource(CFRunLoopGetCurrent(), tap_source, kCFRunLoopCommonModes);
-    } else {
-      WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
-    }
+  EventTapGuard event_tap(opts.grab_keyboard);
+  if (opts.grab_keyboard && !event_tap.tap) {
+    WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
   }
 #endif
 
   int rc = event_loop(sdl, opts);
 
-#ifdef __APPLE__
-  if (tap_source) {
-    CFRunLoopRemoveSource(CFRunLoopGetCurrent(), tap_source, kCFRunLoopCommonModes);
-    CFRelease(tap_source);
-  }
-  if (event_tap)
-    CFRelease(event_tap);
-#endif
-
-  if (freerdp_client_stop(context) != 0)
+  if (freerdp_client_stop(context) != 0) {
     rc = -1;
+  }
 
   int exit_code = sdl->exitCode();
   cleanup();
 
-  if (rc != 0 || exit_code != 0) {
-    auto code = classify_exit(context, exit_code);
-    if (code == SessionError::kUserDisconnect)
-      return {};
-    return fail(code, "RDP session ended with error (exit code " + std::to_string(exit_code) + ")");
+  if (rc == 0 && exit_code == 0) {
+    return {};
   }
-  return {};
+
+  auto code = classify_exit(context, exit_code);
+  if (code == SessionError::kUserDisconnect) {
+    return {};
+  }
+  return fail(code, "RDP session ended with error (exit code " + std::to_string(exit_code) + ")");
 }

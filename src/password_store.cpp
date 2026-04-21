@@ -27,8 +27,9 @@ namespace {
 
 struct CFDeleter {
   void operator()(CFTypeRef ref) const {
-    if (ref)
+    if (ref) {
       CFRelease(ref);
+    }
   }
 };
 using CFPtr = std::unique_ptr<void, CFDeleter>;
@@ -63,8 +64,9 @@ std::string PasswordStore::lookup(const std::string& server, const std::string& 
   CFDictionarySetValue(mut(query), kSecMatchLimit, kSecMatchLimitOne);
 
   CFTypeRef result = nullptr;
-  if (SecItemCopyMatching(mut(query), &result) != errSecSuccess || !result)
+  if (SecItemCopyMatching(mut(query), &result) != errSecSuccess || !result) {
     return {};
+  }
 
   auto data = make_cf(result);
   auto* cf_data = static_cast<CFDataRef>(result);
@@ -118,8 +120,9 @@ std::string PasswordStore::lookup(const std::string& server, const std::string& 
     g_error_free(err);
     return {};
   }
-  if (!pw)
+  if (!pw) {
     return {};
+  }
 
   std::string result(pw);
   secret_password_free(pw);
@@ -140,15 +143,17 @@ void PasswordStore::store(const std::string& server, const std::string& username
                              "username",
                              username.c_str(),
                              nullptr);
-  if (err)
+  if (err) {
     g_error_free(err);
+  }
 }
 
 void PasswordStore::remove(const std::string& server, const std::string& username) {
   GError* err = nullptr;
   secret_password_clear_sync(&kSchema, nullptr, &err, "server", server.c_str(), "username", username.c_str(), nullptr);
-  if (err)
+  if (err) {
     g_error_free(err);
+  }
 }
 
 #endif

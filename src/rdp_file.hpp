@@ -30,7 +30,6 @@ class RdpFile {
   RdpFile(const RdpFile&) = delete;
   RdpFile& operator=(const RdpFile&) = delete;
 
-  // Validates that required fields are present. Throws on failure.
   void validate() const;
   void print(std::ostream& out) const;
 

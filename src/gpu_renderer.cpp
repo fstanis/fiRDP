@@ -19,10 +19,12 @@
 #include <freerdp/gdi/gdi.h>
 
 GpuRenderer::~GpuRenderer() {
-  if (frame_tex_)
+  if (frame_tex_) {
     SDL_DestroyTexture(frame_tex_);
-  if (renderer_)
+  }
+  if (renderer_) {
     SDL_DestroyRenderer(renderer_);
+  }
 }
 
 bool GpuRenderer::init(SDL_Window* window) {
@@ -30,38 +32,44 @@ bool GpuRenderer::init(SDL_Window* window) {
   return renderer_ != nullptr;
 }
 
-void GpuRenderer::draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count) {
-  if (!renderer_ || !gdi || !gdi->primary_buffer)
+void GpuRenderer::ensure_texture(int width, int height) {
+  if (frame_w_ == width && frame_h_ == height) {
     return;
-
-  // Recreate frame texture if GDI dimensions changed.
-  if (frame_w_ != gdi->width || frame_h_ != gdi->height) {
-    if (frame_tex_)
-      SDL_DestroyTexture(frame_tex_);
-    frame_tex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
-                                   gdi->width, gdi->height);
-    frame_w_ = gdi->width;
-    frame_h_ = gdi->height;
-    if (!frame_tex_)
-      return;
   }
+  if (frame_tex_) {
+    SDL_DestroyTexture(frame_tex_);
+  }
+  frame_tex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING, width, height);
+  frame_w_ = width;
+  frame_h_ = height;
+}
 
-  // Upload dirty regions.
+void GpuRenderer::upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count) {
   if (count == 0) {
     SDL_UpdateTexture(frame_tex_, nullptr, gdi->primary_buffer, gdi->stride);
-  } else {
-    for (int i = 0; i < count; i++) {
-      auto& r = rects[i];
-      auto* src = gdi->primary_buffer + r.y * gdi->stride + r.x * 4;
-      SDL_UpdateTexture(frame_tex_, &r, src, gdi->stride);
-    }
+    return;
   }
+  for (int i = 0; i < count; i++) {
+    auto& r = rects[i];
+    auto* src = gdi->primary_buffer + r.y * gdi->stride + r.x * 4;
+    SDL_UpdateTexture(frame_tex_, &r, src, gdi->stride);
+  }
+}
 
-  // Render frame.
+void GpuRenderer::draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count) {
+  if (!renderer_ || !gdi || !gdi->primary_buffer) {
+    return;
+  }
+  ensure_texture(gdi->width, gdi->height);
+  if (!frame_tex_) {
+    return;
+  }
+  upload_regions(gdi, rects, count);
   SDL_RenderTexture(renderer_, frame_tex_, nullptr, nullptr);
 }
 
 void GpuRenderer::present() {
-  if (renderer_)
+  if (renderer_) {
     SDL_RenderPresent(renderer_);
+  }
 }
