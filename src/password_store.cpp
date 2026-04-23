@@ -23,6 +23,8 @@
 
 #include <memory>
 
+#include "sdl_config.hpp"
+
 namespace {
 
 struct CFDeleter {
@@ -44,10 +46,10 @@ CFPtr make_query(const std::string& server, const std::string& username) {
   auto* d = static_cast<CFMutableDictionaryRef>(dict.get());
 
   auto account = make_cf(CFStringCreateWithCString(nullptr, (username + "@" + server).c_str(), kCFStringEncodingUTF8));
-  auto service = make_cf(CFStringCreateWithCString(nullptr, "fiRDP", kCFStringEncodingUTF8));
+  auto svc = make_cf(CFStringCreateWithCString(nullptr, SDL_CLIENT_UUID, kCFStringEncodingUTF8));
 
   CFDictionarySetValue(d, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(d, kSecAttrService, service.get());
+  CFDictionarySetValue(d, kSecAttrService, svc.get());
   CFDictionarySetValue(d, kSecAttrAccount, account.get());
   return dict;
 }
@@ -55,6 +57,34 @@ CFPtr make_query(const std::string& server, const std::string& username) {
 CFMutableDictionaryRef mut(const CFPtr& ptr) {
   return static_cast<CFMutableDictionaryRef>(ptr.get());
 }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+CFPtr make_permissive_access() {
+  SecAccessRef access = nullptr;
+  if (SecAccessCreate(CFSTR("fiRDP"), nullptr, &access) != errSecSuccess || !access) {
+    return {};
+  }
+
+  CFArrayRef acls = nullptr;
+  if (SecAccessCopyACLList(access, &acls) == errSecSuccess && acls) {
+    for (CFIndex i = 0; i < CFArrayGetCount(acls); i++) {
+      auto acl = reinterpret_cast<SecACLRef>(const_cast<void*>(CFArrayGetValueAtIndex(acls, i)));
+      CFArrayRef apps = nullptr;
+      CFStringRef desc = nullptr;
+      SecKeychainPromptSelector prompt = 0;
+      if (SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess) {
+        std::ignore = SecACLSetContents(acl, nullptr, desc, prompt);
+        if (apps) CFRelease(apps);
+        if (desc) CFRelease(desc);
+      }
+    }
+    CFRelease(acls);
+  }
+
+  return make_cf(access);
+}
+#pragma clang diagnostic pop
 
 }  // namespace
 
@@ -74,11 +104,17 @@ std::string PasswordStore::lookup(const std::string& server, const std::string& 
 }
 
 void PasswordStore::store(const std::string& server, const std::string& username, const std::string& password) {
-  remove(server, username);
-
   auto query = make_query(server, username);
+
+  std::ignore = SecItemDelete(mut(query));
+
   auto pw_data = make_cf(CFDataCreate(nullptr, reinterpret_cast<const UInt8*>(password.data()), password.size()));
   CFDictionarySetValue(mut(query), kSecValueData, pw_data.get());
+
+  auto access = make_permissive_access();
+  if (access) {
+    CFDictionarySetValue(mut(query), kSecAttrAccess, access.get());
+  }
 
   std::ignore = SecItemAdd(mut(query), nullptr);
 }
@@ -110,9 +146,50 @@ const SecretSchema kSchema = {
     nullptr,
 };
 
+SecretCollection* get_default_collection(SecretService* service) {
+  GError* err = nullptr;
+  SecretCollection* collection =
+      secret_collection_for_alias_sync(service, SECRET_COLLECTION_DEFAULT, SECRET_COLLECTION_NONE, nullptr, &err);
+  if (err) {
+    g_error_free(err);
+  }
+  return collection;
+}
+
+void unlock_collection(SecretService* service, SecretCollection* collection) {
+  if (!secret_collection_get_locked(collection)) {
+    return;
+  }
+  GList* objects = g_list_prepend(nullptr, collection);
+  GError* err = nullptr;
+  secret_service_unlock_sync(service, objects, nullptr, nullptr, &err);
+  g_list_free(objects);
+  if (err) {
+    g_error_free(err);
+  }
+}
+
+void ensure_default_collection_unlocked() {
+  GError* err = nullptr;
+  SecretService* service = secret_service_get_sync(SECRET_SERVICE_LOAD_COLLECTIONS, nullptr, &err);
+  if (err) {
+    g_error_free(err);
+  }
+  if (!service) {
+    return;
+  }
+  SecretCollection* collection = get_default_collection(service);
+  if (collection) {
+    unlock_collection(service, collection);
+    g_object_unref(collection);
+  }
+  g_object_unref(service);
+}
+
 }  // namespace
 
 std::string PasswordStore::lookup(const std::string& server, const std::string& username) {
+  ensure_default_collection_unlocked();
   GError* err = nullptr;
   gchar* pw = secret_password_lookup_sync(
       &kSchema, nullptr, &err, "server", server.c_str(), "username", username.c_str(), nullptr);

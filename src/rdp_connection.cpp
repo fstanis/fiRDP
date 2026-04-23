@@ -21,6 +21,7 @@
 #include "rdp_connection.hpp"
 
 #ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #endif
 
@@ -46,7 +47,9 @@
 #include <string>
 #include <vector>
 
+#include "display_info.hpp"
 #include "gpu_renderer.hpp"
+#include "sdl_config.hpp"
 #include "sdl_context.hpp"
 #include "sdl_utils.hpp"
 
@@ -95,6 +98,7 @@ struct EventTapGuard {
   EventTapGuard(const EventTapGuard&) = delete;
   EventTapGuard& operator=(const EventTapGuard&) = delete;
 };
+
 #endif
 
 static constexpr struct {
@@ -103,7 +107,12 @@ static constexpr struct {
 } kPreInitHints[] = {
 #ifndef __APPLE__
     {SDL_HINT_VIDEO_DRIVER, "wayland"},
+#else
+    {SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0"},
+    {SDL_HINT_MAC_OPTION_AS_ALT, "both"},
+    {SDL_HINT_MAC_PRESS_AND_HOLD, "0"},
 #endif
+    {SDL_HINT_APP_ID, SDL_CLIENT_UUID},
 };
 
 static constexpr struct {
@@ -117,6 +126,10 @@ static constexpr struct {
     {SDL_HINT_PEN_MOUSE_EVENTS, "0"},
     {SDL_HINT_TOUCH_MOUSE_EVENTS, "0"},
     {SDL_HINT_MOUSE_DPI_SCALE_CURSORS, "1"},
+    {SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1"},
+#ifdef __APPLE__
+    {SDL_HINT_RENDER_DRIVER, "metal"},
+#endif
 };
 
 class ConnectionError : public std::exception {
@@ -362,6 +375,12 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
             w->fullscreen(ev.user.code != 0, ev.user.data2 != nullptr);
           }
           break;
+        case SDL_EVENT_MOUSE_WHEEL:
+          ev.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+          if (!sdl->handleEvent(ev)) {
+            throw ConnectionError{-1, "handleEvent"};
+          }
+          break;
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
           break;
@@ -428,6 +447,7 @@ static Result init_freerdp(rdpFile* file,
   }
 
   freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, TRUE);
+
   if (opts.grab_keyboard) {
     freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, TRUE);
   } else {
@@ -475,14 +495,47 @@ static SessionError classify_exit(rdpContext* context, int exit_code) {
   return SessionError::kGeneral;
 }
 
-static void apply_native_scale(SdlContext* sdl) {
-  auto scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-  if (scale <= 0.0f) {
+#ifdef __APPLE__
+
+static NativeDisplay s_native_override{};
+static BOOL (*s_original_preconnect)(freerdp*) = nullptr;
+
+static BOOL wrapped_preconnect(freerdp* instance) {
+  if (!s_original_preconnect(instance)) {
+    return FALSE;
+  }
+  if (s_native_override.pixel_w == 0) {
+    return TRUE;
+  }
+  auto* settings = instance->context->settings;
+  freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, s_native_override.pixel_w);
+  freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, s_native_override.pixel_h);
+  WLog_Print(get_context(instance->context)->getWLog(), WLOG_INFO,
+             "Native resolution: %ux%u (logical %ux%u)",
+             s_native_override.pixel_w, s_native_override.pixel_h,
+             s_native_override.logical_w, s_native_override.logical_h);
+  return TRUE;
+}
+
+static void apply_native_resolution(SdlContext* sdl) {
+  s_native_override = DisplayInfo::native_display();
+  if (s_native_override.pixel_w == 0) {
     return;
   }
-  auto pct = static_cast<UINT32>(scale * 100.0f);
+  auto* instance = sdl->context()->instance;
+  s_original_preconnect = instance->PreConnect;
+  instance->PreConnect = wrapped_preconnect;
+}
+
+#endif
+
+static void apply_native_scale(SdlContext* sdl, bool native_resolution) {
+  auto pct = DisplayInfo::scale_percent(native_resolution);
+  if (pct == 0) {
+    return;
+  }
   freerdp_settings_set_uint32(sdl->context()->settings, FreeRDP_DesktopScaleFactor, pct);
-  WLog_Print(sdl->getWLog(), WLOG_INFO, "Overriding desktop scale factor to %u%%", pct);
+  WLog_Print(sdl->getWLog(), WLOG_INFO, "Desktop scale factor: %u%%", pct);
 }
 
 std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
@@ -508,13 +561,18 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     SDL_Quit();
   };
 
-  if (opts.native_scale) {
-    apply_native_scale(sdl);
-  }
-
   if (!sdl->detectDisplays()) {
     cleanup();
     return fail("Failed to detect displays");
+  }
+
+#ifdef __APPLE__
+  if (opts.native_resolution && freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_Fullscreen)) {
+    apply_native_resolution(sdl);
+  }
+#endif
+  if (opts.native_scale) {
+    apply_native_scale(sdl, opts.native_resolution);
   }
 
   auto* context = sdl->context();

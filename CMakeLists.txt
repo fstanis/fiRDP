@@ -6,12 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_options(-O3 -march=native)
-    if(NOT APPLE)
-        add_link_options(-fuse-ld=lld)
-    endif()
 endif()
 
-# --- Build FreeRDP as a subdirectory (static, no clients/servers) ---
+# --- FreeRDP (static subdirectory) ---
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(WITH_CLIENT OFF CACHE BOOL "" FORCE)
 set(WITH_SERVER OFF CACHE BOOL "" FORCE)
@@ -23,13 +20,9 @@ set(WITH_GFX_AV1 ON CACHE BOOL "" FORCE)
 set(WITH_FFMPEG ON CACHE BOOL "" FORCE)
 set(WITH_DSP_FFMPEG ON CACHE BOOL "" FORCE)
 set(WITH_VIDEO_FFMPEG ON CACHE BOOL "" FORCE)
-if(NOT APPLE)
-    set(WITH_VAAPI ON CACHE BOOL "" FORCE)
-    set(WITH_VAAPI_H264_ENCODING ON CACHE BOOL "" FORCE)
-endif()
 set(EXPORT_ALL_SYMBOLS OFF CACHE BOOL "" FORCE)
 
-# --- Apply patches to FreeRDP before building ---
+# --- FreeRDP patches ---
 file(GLOB FREERDP_PATCHES "${CMAKE_SOURCE_DIR}/patches/*.patch")
 foreach(patch ${FREERDP_PATCHES})
     execute_process(
@@ -49,19 +42,10 @@ endforeach()
 
 add_subdirectory(FreeRDP EXCLUDE_FROM_ALL)
 
-# --- Find other dependencies ---
+# --- Dependencies ---
 find_package(SDL3 REQUIRED)
 
-if(APPLE)
-    find_library(SECURITY_FRAMEWORK Security REQUIRED)
-    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
-    find_library(APPSERVICES_FRAMEWORK ApplicationServices REQUIRED)
-else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
-endif()
-
-# --- FreeRDP SDL3 client sources (core rendering/input — not dialogs) ---
+# --- FreeRDP SDL3 client sources ---
 set(FREERDP_SDL_DIR "${CMAKE_SOURCE_DIR}/FreeRDP/client/SDL")
 set(SDL3_CLIENT_SOURCES
     ${FREERDP_SDL_DIR}/SDL3/sdl_context.cpp
@@ -86,6 +70,7 @@ add_executable(fiRDP
     src/rdp_connection.cpp
     src/host_keys.cpp
     src/gpu_renderer.cpp
+    src/display_info.cpp
     src/fi_dialogs.cpp
     src/fi_dialog_stubs.cpp
     ${SDL3_CLIENT_SOURCES}
@@ -103,10 +88,6 @@ target_include_directories(fiRDP PRIVATE
 
 target_compile_options(fiRDP PRIVATE -include cstdlib)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT APPLE)
-    set_target_properties(fiRDP PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
-endif()
-
 target_link_libraries(fiRDP PRIVATE
     SDL3::SDL3
     freerdp-client
@@ -114,8 +95,34 @@ target_link_libraries(fiRDP PRIVATE
     winpr
 )
 
+# --- Platform-specific configuration ---
 if(APPLE)
-    target_link_libraries(fiRDP PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK} ${APPSERVICES_FRAMEWORK})
+    set(WITH_VAAPI OFF CACHE BOOL "" FORCE)
+
+    find_library(SECURITY_FRAMEWORK Security REQUIRED)
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    find_library(APPSERVICES_FRAMEWORK ApplicationServices REQUIRED)
+    target_link_libraries(fiRDP PRIVATE
+        ${SECURITY_FRAMEWORK}
+        ${COREFOUNDATION_FRAMEWORK}
+        ${APPSERVICES_FRAMEWORK}
+    )
+
+    set_target_properties(fiRDP PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/macos/Info.plist"
+    )
 else()
+    set(WITH_VAAPI ON CACHE BOOL "" FORCE)
+    set(WITH_VAAPI_H264_ENCODING ON CACHE BOOL "" FORCE)
+
+    add_link_options(-fuse-ld=lld)
+
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
     target_link_libraries(fiRDP PRIVATE PkgConfig::LIBSECRET)
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        set_target_properties(fiRDP PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
 endif()

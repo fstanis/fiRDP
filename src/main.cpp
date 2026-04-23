@@ -60,7 +60,9 @@ struct Args {
   bool auto_connect = false;
   bool quiet = false;
   bool grab_keyboard = false;
+  bool native_resolution = false;
   bool native_scale = false;
+
   bool prefer_h264 = false;
   bool low_latency = false;
   std::string rdp_path;
@@ -90,7 +92,9 @@ void usage(const char* prog) {
             << "  -q, --quiet           Suppress connection info output\n"
             << "  -g, --grab-keyboard   Grab keyboard (requires Accessibility on macOS)\n"
             << "  -s, --native-scale    Override desktop scale factor with local display scale\n"
-            << "      --prefer-h264     Hint server to prefer H.264 (GPU decode via VAAPI)\n"
+            << "      --native-resolution  Use display's native panel resolution (macOS only)\n"
+
+            << "      --prefer-h264     Hint server to prefer H.264\n"
             << "      --low-latency     Send QoE feedback and suspend per-frame acks\n"
             << "  -h, --help            Show this help\n";
 }
@@ -107,6 +111,13 @@ Args parse_args(int argc, char* argv[]) {
       args.grab_keyboard = true;
     } else if (arg == "-s" || arg == "--native-scale") {
       args.native_scale = true;
+    } else if (arg == "--native-resolution") {
+#ifdef __APPLE__
+      args.native_resolution = true;
+#else
+      std::cerr << "Error: --native-resolution is only supported on macOS\n";
+      std::exit(1);
+#endif
     } else if (arg == "--prefer-h264") {
       args.prefer_h264 = true;
     } else if (arg == "--low-latency") {
@@ -198,8 +209,10 @@ int run_session(RdpFile& rdp, const std::string& password, const SessionOptions&
   std::cerr << "Error: " << message << '\n';
   if (code == SessionError::kLogonFailure) {
     PasswordStore::remove(rdp.server(), rdp.username());
+  } else {
+    PasswordStore::store(rdp.server(), rdp.username(), password);
   }
-  return 1;
+  return code == SessionError::kUserDisconnect ? 0 : 1;
 }
 
 void suppress_kerberos() {
@@ -225,7 +238,9 @@ int main(int argc, char* argv[]) {
   auto host_keys = parse_host_keys(SdlPref::instance()->get_array("host_keys"));
   return run_session(*rdp, password,
                      {.grab_keyboard = args.grab_keyboard,
+                      .native_resolution = args.native_resolution,
                       .native_scale = args.native_scale,
+
                       .prefer_h264 = args.prefer_h264,
                       .low_latency = args.low_latency,
                       .host_keys = host_keys});

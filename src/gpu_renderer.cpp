@@ -28,6 +28,9 @@ GpuRenderer::~GpuRenderer() {
 }
 
 bool GpuRenderer::init(SDL_Window* window) {
+  if (!window) {
+    return false;
+  }
   renderer_ = SDL_CreateRenderer(window, nullptr);
   return renderer_ != nullptr;
 }
@@ -42,6 +45,7 @@ void GpuRenderer::ensure_texture(int width, int height) {
   frame_tex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING, width, height);
   frame_w_ = width;
   frame_h_ = height;
+  SDL_SetRenderLogicalPresentation(renderer_, width, height, SDL_LOGICAL_PRESENTATION_STRETCH);
 }
 
 void GpuRenderer::upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count) {
