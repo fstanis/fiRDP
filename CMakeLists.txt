@@ -22,24 +22,6 @@ set(WITH_DSP_FFMPEG ON CACHE BOOL "" FORCE)
 set(WITH_VIDEO_FFMPEG ON CACHE BOOL "" FORCE)
 set(EXPORT_ALL_SYMBOLS OFF CACHE BOOL "" FORCE)
 
-# --- FreeRDP patches ---
-file(GLOB FREERDP_PATCHES "${CMAKE_SOURCE_DIR}/patches/*.patch")
-foreach(patch ${FREERDP_PATCHES})
-    execute_process(
-        COMMAND git apply --check ${patch}
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/FreeRDP
-        RESULT_VARIABLE patch_needed
-        OUTPUT_QUIET ERROR_QUIET
-    )
-    if(patch_needed EQUAL 0)
-        execute_process(
-            COMMAND git apply ${patch}
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/FreeRDP
-        )
-        message(STATUS "Applied FreeRDP patch: ${patch}")
-    endif()
-endforeach()
-
 add_subdirectory(FreeRDP EXCLUDE_FROM_ALL)
 
 # --- Dependencies ---
@@ -98,6 +80,7 @@ target_link_libraries(fiRDP PRIVATE
 # --- Platform-specific configuration ---
 if(APPLE)
     set(WITH_VAAPI OFF CACHE BOOL "" FORCE)
+    set(WITH_VIDEOTOOLBOX ON CACHE BOOL "" FORCE)
 
     find_library(SECURITY_FRAMEWORK Security REQUIRED)
     find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
@@ -126,3 +109,9 @@ else()
         set_target_properties(fiRDP PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     endif()
 endif()
+
+# --- Install ---
+install(TARGETS fiRDP
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION bin
+)

@@ -4,6 +4,42 @@ A lightweight RDP client for Linux and macOS, built on FreeRDP and SDL3.
 
 GPU-accelerated rendering via SDL3 (Metal on macOS, GPU-accelerated on Linux), hardware video decoding (VAAPI/FFmpeg on Linux, VideoToolbox on macOS), and system keyring integration for password storage.
 
+## Pre-built binaries
+
+Download the latest build from [GitHub Actions](../../actions/workflows/build.yml): open the most recent successful run and download the artifact for your platform.
+
+| Artifact | Platform |
+|---|---|
+| `fiRDP-trixie-x86_64` | Linux x86_64 (Debian Trixie) |
+| `fiRDP-trixie-arm64` | Linux arm64 (Debian Trixie) |
+| `fiRDP-flatpak-x86_64` | Linux (Flatpak bundle, x86_64) |
+| `fiRDP-flatpak-arm64` | Linux (Flatpak bundle, arm64) |
+| `fiRDP-macos-arm64` | macOS (Apple Silicon) |
+
+On macOS, extract and run `open fiRDP.app -- <file.rdp>`.
+
+### Linux native binary (Debian Trixie)
+
+The native binary is built on Debian 13 (Trixie). Install the runtime dependencies:
+
+```sh
+sudo apt install libsdl3-0 libcups2t64 libusb-1.0-0 libsecret-1-0 \
+  libavcodec61 libavutil59 libswscale8 libswresample5
+```
+
+Then run `./fiRDP <file.rdp>`.
+
+For other distros, use the Flatpak bundle instead - it includes all dependencies.
+
+### Flatpak (any Linux distro)
+
+```sh
+flatpak install fiRDP.flatpak
+flatpak run me.stanis.apps.fiRDP <file.rdp>
+```
+
+Note: artifacts require a GitHub account to download and expire after 90 days.
+
 ## Building
 
 Requirements: clang, lld, cmake, SDL3, and FreeRDP's build dependencies (openssl, ffmpeg, libusb, cups, jansson). On Linux: libsecret. On macOS: Xcode command line tools.

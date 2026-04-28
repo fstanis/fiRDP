@@ -1,0 +1,101 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  trixie:
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git cmake ninja-build clang lld pkg-config \
+            libsdl3-dev libssl-dev libsecret-1-dev \
+            libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
+            libva-dev libusb-1.0-0-dev \
+            libicu-dev libfuse3-dev libcups2-dev libkrb5-dev
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build fiRDP
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiRDP-trixie-${{ matrix.arch }}
+          path: build/fiRDP
+
+  flatpak:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder --force-clean --repo=repo builddir me.stanis.apps.fiRDP.yml
+          flatpak build-bundle repo fiRDP.flatpak me.stanis.apps.fiRDP
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiRDP-flatpak-${{ matrix.arch }}
+          path: fiRDP.flatpak
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: brew install cmake ninja sdl3 openssl ffmpeg
+
+      - name: Build fiRDP
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl)
+          cmake --build build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiRDP-macos-arm64
+          path: build/fiRDP.app
