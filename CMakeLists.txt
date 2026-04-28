@@ -115,3 +115,9 @@ install(TARGETS fiRDP
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+if(NOT APPLE)
+    install(FILES me.stanis.apps.fiRDP.desktop
+        DESTINATION share/applications
+    )
+endif()
