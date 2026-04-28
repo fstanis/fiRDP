@@ -62,10 +62,13 @@ struct Args {
   bool grab_keyboard = false;
   bool native_resolution = false;
   bool native_scale = false;
+  bool no_wayland = false;
 
   bool prefer_h264 = false;
   bool low_latency = false;
+  int display = -1;
   std::string rdp_path;
+  std::vector<std::string> rdp_overrides;
 };
 
 std::string read_password(const std::string& prompt) {
@@ -86,23 +89,37 @@ std::string read_password(const std::string& prompt) {
 }
 
 void usage(const char* prog) {
-  std::cerr << "Usage: " << prog << " [options] <file.rdp>\n"
+  std::cerr << "Usage: " << prog << " [options] <file.rdp | rdp://...> [-- \"key:type:value\" ...]\n"
             << "\nOptions:\n"
-            << "  -c, --connect         Connect immediately (skip confirmation)\n"
-            << "  -q, --quiet           Suppress connection info output\n"
-            << "  -g, --grab-keyboard   Grab keyboard (requires Accessibility on macOS)\n"
-            << "  -s, --native-scale    Override desktop scale factor with local display scale\n"
+            << "  -c, --connect            Connect immediately (skip confirmation)\n"
+            << "  -q, --quiet              Suppress connection info output\n"
+            << "  -g, --grab-keyboard      Grab keyboard (requires Accessibility on macOS)\n"
+            << "  -s, --native-scale       Override desktop scale factor with local display scale\n"
             << "      --native-resolution  Use display's native panel resolution (macOS only)\n"
-
-            << "      --prefer-h264     Hint server to prefer H.264\n"
-            << "      --low-latency     Send QoE feedback and suspend per-frame acks\n"
-            << "  -h, --help            Show this help\n";
+            << "  -d, --display <n>        Use display number n (0-indexed)\n"
+            << "      --no-wayland         Force X11 backend instead of Wayland (Linux only)\n"
+            << "      --prefer-h264        Hint server to prefer H.264\n"
+            << "      --low-latency        Send QoE feedback and suspend per-frame acks\n"
+            << "  -h, --help               Show this help\n"
+            << "\nRDP parameter overrides (after --):\n"
+            << "  \"key:type:value\"  e.g. \"use redirection server name:i:0\"\n"
+            << "\nRDP URL:\n"
+            << "  rdp://full%20address=s:host:3389&audiomode=i:2\n";
 }
 
 Args parse_args(int argc, char* argv[]) {
   Args args;
+  bool after_separator = false;
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
+    if (after_separator) {
+      args.rdp_overrides.push_back(arg);
+      continue;
+    }
+    if (arg == "--") {
+      after_separator = true;
+      continue;
+    }
     if (arg == "-c" || arg == "--connect") {
       args.auto_connect = true;
     } else if (arg == "-q" || arg == "--quiet") {
@@ -117,6 +134,16 @@ Args parse_args(int argc, char* argv[]) {
 #else
       std::cerr << "Error: --native-resolution is only supported on macOS\n";
       std::exit(1);
+#endif
+    } else if (arg == "-d" || arg == "--display") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --display requires an argument\n";
+        std::exit(1);
+      }
+      args.display = std::stoi(argv[++i]);
+    } else if (arg == "--no-wayland") {
+#ifndef __APPLE__
+      args.no_wayland = true;
 #endif
     } else if (arg == "--prefer-h264") {
       args.prefer_h264 = true;
@@ -150,9 +177,17 @@ void init_config() {
   }
 }
 
-std::unique_ptr<RdpFile> load_rdp_file(const std::string& path) {
+bool is_rdp_url(const std::string& input) {
+  return input.starts_with("rdp://") || input.starts_with("rdps://");
+}
+
+std::unique_ptr<RdpFile> load_rdp(const std::string& input, const std::vector<std::string>& overrides) {
   try {
-    return RdpFile::parse(path);
+    auto rdp = is_rdp_url(input) ? RdpFile::from_url(input) : RdpFile::parse(input);
+    if (!overrides.empty()) {
+      rdp->apply_overrides(overrides);
+    }
+    return rdp;
   } catch (const std::exception& e) {
     std::cerr << "Error: " << e.what() << '\n';
     std::exit(1);
@@ -225,7 +260,7 @@ int main(int argc, char* argv[]) {
   suppress_kerberos();
   init_config();
   auto args = parse_args(argc, argv);
-  auto rdp = load_rdp_file(args.rdp_path);
+  auto rdp = load_rdp(args.rdp_path, args.rdp_overrides);
 
   if (!args.quiet) {
     rdp->print(std::cerr);
@@ -236,12 +271,14 @@ int main(int argc, char* argv[]) {
   confirm_connection(args.auto_connect);
 
   auto host_keys = parse_host_keys(SdlPref::instance()->get_array("host_keys"));
-  return run_session(*rdp, password,
+  return run_session(*rdp,
+                     password,
                      {.grab_keyboard = args.grab_keyboard,
                       .native_resolution = args.native_resolution,
                       .native_scale = args.native_scale,
-
+                      .no_wayland = args.no_wayland,
                       .prefer_h264 = args.prefer_h264,
                       .low_latency = args.low_latency,
+                      .display = args.display,
                       .host_keys = host_keys});
 }

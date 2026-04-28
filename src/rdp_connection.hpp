@@ -43,9 +43,11 @@ struct SessionOptions {
   bool grab_keyboard = false;
   bool native_resolution = false;
   bool native_scale = false;
+  bool no_wayland = false;
 
   bool prefer_h264 = false;
   bool low_latency = false;
+  int display = -1;
   std::vector<HostKey> host_keys;
 };
 

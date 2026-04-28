@@ -105,9 +105,7 @@ static constexpr struct {
   const char* key;
   const char* value;
 } kPreInitHints[] = {
-#ifndef __APPLE__
-    {SDL_HINT_VIDEO_DRIVER, "wayland"},
-#else
+#ifdef __APPLE__
     {SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0"},
     {SDL_HINT_MAC_OPTION_AS_ALT, "both"},
     {SDL_HINT_MAC_PRESS_AND_HOLD, "0"},
@@ -466,11 +464,21 @@ static Result init_freerdp(rdpFile* file,
     freerdp_settings_set_bool(settings, FreeRDP_GfxSuspendFrameAck, TRUE);
   }
 
+  if (opts.display >= 0) {
+    auto id = static_cast<UINT32>(opts.display);
+    freerdp_settings_set_pointer_len(settings, FreeRDP_MonitorIds, &id, 1);
+  }
+
   return {};
 }
 
-static Result init_sdl(SdlContext* sdl) {
+static Result init_sdl(SdlContext* sdl, const SessionOptions& opts) {
   apply_hints(kPreInitHints);
+#ifndef __APPLE__
+  if (!opts.no_wayland) {
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+  }
+#endif
 
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
     return fail(std::string("SDL_Init failed: ") + SDL_GetError());
@@ -512,10 +520,13 @@ static BOOL wrapped_preconnect(freerdp* instance) {
   auto* settings = instance->context->settings;
   freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, s_native_override.pixel_w);
   freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, s_native_override.pixel_h);
-  WLog_Print(get_context(instance->context)->getWLog(), WLOG_INFO,
+  WLog_Print(get_context(instance->context)->getWLog(),
+             WLOG_INFO,
              "Native resolution: %ux%u (logical %ux%u)",
-             s_native_override.pixel_w, s_native_override.pixel_h,
-             s_native_override.logical_w, s_native_override.logical_h);
+             s_native_override.pixel_w,
+             s_native_override.pixel_h,
+             s_native_override.logical_w,
+             s_native_override.logical_h);
   return TRUE;
 }
 
@@ -551,7 +562,7 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
 
   auto* sdl = owner->sdl;
 
-  if (auto r = init_sdl(sdl); !r) {
+  if (auto r = init_sdl(sdl, opts); !r) {
     return r;
   }
 

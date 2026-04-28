@@ -61,7 +61,7 @@ open build/fiRDP.app -- <file.rdp>
 ## Usage
 
 ```
-fiRDP [options] <file.rdp>
+fiRDP [options] <file.rdp | rdp://...> [-- "key:type:value" ...]
 
 Options:
   -c, --connect            Connect immediately (skip confirmation)
@@ -69,12 +69,30 @@ Options:
   -g, --grab-keyboard      Grab keyboard (requires Accessibility on macOS)
   -s, --native-scale       Override desktop scale factor with local display scale
       --native-resolution  Use display's native panel resolution (macOS only)
+  -d, --display <n>        Use display number n (0-indexed)
+      --no-wayland         Force X11 backend instead of Wayland (Linux only, not recommended)
       --prefer-h264        Hint server to prefer H.264
       --low-latency        Send QoE feedback and suspend per-frame acks
   -h, --help               Show this help
 ```
 
 Settings are loaded from the `.rdp` file. Passwords are retrieved from the system keyring (libsecret on Linux, Keychain on macOS) and stored after successful connections.
+
+### RDP parameter overrides
+
+Any RDP setting can be overridden on the command line after `--`, using the standard `.rdp` file format (`key:type:value`):
+
+```sh
+fiRDP -c my.rdp -- "use redirection server name:i:0" "negotiate security layer:i:1"
+```
+
+### RDP URLs
+
+Instead of an `.rdp` file, you can pass an `rdp://` URL with URL-encoded parameters:
+
+```sh
+fiRDP 'rdp://full%20address=s:mypc:3389&username=s:admin&audiomode=i:2&disable%20themes=i:1'
+```
 
 ## Keyboard Shortcuts
 

@@ -21,16 +21,19 @@
 #include <memory>
 #include <ostream>
 #include <string>
+#include <vector>
 
 class RdpFile {
  public:
   static std::unique_ptr<RdpFile> parse(const std::string& path);
+  static std::unique_ptr<RdpFile> from_url(const std::string& url);
 
   ~RdpFile();
   RdpFile(const RdpFile&) = delete;
   RdpFile& operator=(const RdpFile&) = delete;
 
   void validate() const;
+  void apply_overrides(const std::vector<std::string>& overrides);
   void print(std::ostream& out) const;
 
   std::string server() const;
