@@ -23,7 +23,7 @@ class GpuRenderer {
  public:
   ~GpuRenderer();
 
-  bool init(SDL_Window* window);
+  void init(SDL_Renderer* renderer);
   void draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count);
   void present();
 

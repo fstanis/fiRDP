@@ -357,8 +357,8 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
             throw ConnectionError{-1, "createWindows"};
           }
           auto* first = sdl->getFirstWindow();
-          if (first && !gpu.init(first->window())) {
-            throw ConnectionError{-1, "GPU renderer init"};
+          if (first) {
+            gpu.init(first->renderer());
           }
           break;
         }

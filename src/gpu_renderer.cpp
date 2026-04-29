@@ -22,17 +22,10 @@ GpuRenderer::~GpuRenderer() {
   if (frame_tex_) {
     SDL_DestroyTexture(frame_tex_);
   }
-  if (renderer_) {
-    SDL_DestroyRenderer(renderer_);
-  }
 }
 
-bool GpuRenderer::init(SDL_Window* window) {
-  if (!window) {
-    return false;
-  }
-  renderer_ = SDL_CreateRenderer(window, nullptr);
-  return renderer_ != nullptr;
+void GpuRenderer::init(SDL_Renderer* renderer) {
+  renderer_ = renderer;
 }
 
 void GpuRenderer::ensure_texture(int width, int height) {
