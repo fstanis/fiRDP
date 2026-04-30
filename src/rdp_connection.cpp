@@ -260,12 +260,16 @@ static void handle_key_event(SdlContext* sdl, const SDL_Event& ev) {
 
   if (is_disconnect_shortcut(ev, mods)) {
     WLog_Print(sdl->getWLog(), WLOG_INFO, "Disconnect shortcut pressed");
-    std::ignore = freerdp_abort_connect_context(sdl->context());
+    if (!freerdp_abort_connect_context(sdl->context())) {
+      WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to abort connection");
+    }
     return;
   }
   if (is_fullscreen_shortcut(ev, mods)) {
     WLog_Print(sdl->getWLog(), WLOG_INFO, "Fullscreen shortcut pressed");
-    std::ignore = sdl->toggleFullscreen();
+    if (!sdl->toggleFullscreen()) {
+      WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to toggle fullscreen");
+    }
   }
 }
 
@@ -319,7 +323,7 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
             break;
           }
           if (!sdl->handleEvent(ev)) {
-            throw ConnectionError{-1, "handleEvent"};
+            WLog_Print(sdl->getWLog(), WLOG_WARN, "handleEvent failed for event 0x%x", ev.type);
           }
           break;
         case SDL_EVENT_KEY_UP:
@@ -327,7 +331,7 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
             break;
           }
           if (!sdl->handleEvent(ev)) {
-            throw ConnectionError{-1, "handleEvent"};
+            WLog_Print(sdl->getWLog(), WLOG_WARN, "handleEvent failed for event 0x%x", ev.type);
           }
           break;
         case SDL_EVENT_USER_POINTER_NULL:
@@ -378,7 +382,7 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
         case SDL_EVENT_MOUSE_WHEEL:
           ev.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
           if (!sdl->handleEvent(ev)) {
-            throw ConnectionError{-1, "handleEvent"};
+            WLog_Print(sdl->getWLog(), WLOG_WARN, "handleEvent failed for event 0x%x", ev.type);
           }
           break;
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
@@ -387,16 +391,18 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
           if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
             if (auto* w = sdl->getWindowForId(ev.window.windowID)) {
-              std::ignore = w->grabKeyboard(true);
+              if (!w->grabKeyboard(true)) {
+                WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to grab keyboard on focus");
+              }
             }
           }
           if (!sdl->handleEvent(ev)) {
-            throw ConnectionError{-1, "handleEvent"};
+            WLog_Print(sdl->getWLog(), WLOG_WARN, "handleEvent failed for event 0x%x", ev.type);
           }
           break;
         default:
           if (!sdl->handleEvent(ev)) {
-            throw ConnectionError{-1, "handleEvent"};
+            WLog_Print(sdl->getWLog(), WLOG_WARN, "handleEvent failed for event 0x%x", ev.type);
           }
           break;
       }

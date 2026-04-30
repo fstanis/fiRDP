@@ -16,6 +16,8 @@
 
 #include "password_store.hpp"
 
+#include <iostream>
+
 #ifdef __APPLE__
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -74,9 +76,13 @@ CFPtr make_permissive_access() {
       CFStringRef desc = nullptr;
       SecKeychainPromptSelector prompt = 0;
       if (SecACLCopyContents(acl, &apps, &desc, &prompt) == errSecSuccess) {
-        std::ignore = SecACLSetContents(acl, nullptr, desc, prompt);
-        if (apps) CFRelease(apps);
-        if (desc) CFRelease(desc);
+        if (SecACLSetContents(acl, nullptr, desc, prompt) != errSecSuccess) {
+          std::cerr << "Warning: failed to set keychain ACL contents\n";
+        }
+        if (apps)
+          CFRelease(apps);
+        if (desc)
+          CFRelease(desc);
       }
     }
     CFRelease(acls);
@@ -116,12 +122,17 @@ void PasswordStore::store(const std::string& server, const std::string& username
     CFDictionarySetValue(mut(query), kSecAttrAccess, access.get());
   }
 
-  std::ignore = SecItemAdd(mut(query), nullptr);
+  if (SecItemAdd(mut(query), nullptr) != errSecSuccess) {
+    std::cerr << "Error: failed to store password in keychain\n";
+  }
 }
 
 void PasswordStore::remove(const std::string& server, const std::string& username) {
   auto query = make_query(server, username);
-  std::ignore = SecItemDelete(mut(query));
+  OSStatus status = SecItemDelete(mut(query));
+  if (status != errSecSuccess && status != errSecItemNotFound) {
+    std::cerr << "Error: failed to remove password from keychain\n";
+  }
 }
 
 #else
@@ -221,6 +232,7 @@ void PasswordStore::store(const std::string& server, const std::string& username
                              username.c_str(),
                              nullptr);
   if (err) {
+    std::cerr << "Error: failed to store password: " << err->message << '\n';
     g_error_free(err);
   }
 }
@@ -229,6 +241,7 @@ void PasswordStore::remove(const std::string& server, const std::string& usernam
   GError* err = nullptr;
   secret_password_clear_sync(&kSchema, nullptr, &err, "server", server.c_str(), "username", username.c_str(), nullptr);
   if (err) {
+    std::cerr << "Error: failed to remove password: " << err->message << '\n';
     g_error_free(err);
   }
 }

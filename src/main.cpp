@@ -173,7 +173,9 @@ void init_config() {
   if (!std::filesystem::exists(config_path)) {
     std::filesystem::create_directories(config_path.parent_path());
     std::ofstream(config_path) << kDefaultConfig;
-    std::ignore = SdlPref::instance(config_path.string());
+    if (!SdlPref::instance(config_path.string())) {
+      std::cerr << "Warning: failed to load config from " << config_path << '\n';
+    }
   }
 }
 
