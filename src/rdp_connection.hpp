@@ -47,6 +47,8 @@ struct SessionOptions {
 
   bool prefer_h264 = false;
   bool low_latency = false;
+  bool vsync = false;
+  bool low_power_gpu = false;
   int display = -1;
   std::vector<HostKey> host_keys;
 };

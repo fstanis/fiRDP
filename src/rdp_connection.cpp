@@ -117,8 +117,6 @@ static constexpr struct {
   const char* key;
   const char* value;
 } kPostInitHints[] = {
-    {SDL_HINT_RENDER_GPU_LOW_POWER, "0"},
-    {SDL_HINT_RENDER_VSYNC, "0"},
     {SDL_HINT_VIDEO_SYNC_WINDOW_OPERATIONS, "0"},
     {SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "0"},
     {SDL_HINT_PEN_MOUSE_EVENTS, "0"},
@@ -281,16 +279,22 @@ static SDL_FPoint decode_pointer_position(const SDL_Event& ev) {
 
 static void drain_and_render(SdlContext* sdl, GpuRenderer& gpu) {
   std::vector<SDL_Rect> all_rects;
-  std::vector<SDL_Rect> rects;
-  do {
-    rects = sdl->pop();
+  for (auto rects = sdl->pop(); !rects.empty(); rects = sdl->pop()) {
     all_rects.insert(all_rects.end(), rects.begin(), rects.end());
-  } while (!rects.empty());
+  }
+  if (all_rects.empty()) {
+    return;
+  }
 
   auto* gdi = sdl->context()->gdi;
-  if (gdi) {
-    gpu.draw_frame(gdi, all_rects.data(), static_cast<int>(all_rects.size()));
-    gpu.present();
+  if (!gdi) {
+    return;
+  }
+  gpu.draw_frame(gdi, all_rects.data(), static_cast<int>(all_rects.size()));
+  gpu.present();
+
+  SDL_Event drained;
+  while (SDL_PeepEvents(&drained, 1, SDL_GETEVENT, SDL_EVENT_USER_UPDATE, SDL_EVENT_USER_UPDATE) > 0) {
   }
 }
 
@@ -491,6 +495,12 @@ static Result init_sdl(SdlContext* sdl, const SessionOptions& opts) {
   }
 
   apply_hints(kPostInitHints);
+
+  // TEMPORARY: exposed as CLI flags (--vsync, --low-power-gpu) while we figure
+  // out the right defaults for macOS Metal vs Linux. Remove the flags and bake
+  // the chosen values back into kPostInitHints once that's settled.
+  SDL_SetHint(SDL_HINT_RENDER_VSYNC, opts.vsync ? "1" : "0");
+  SDL_SetHint(SDL_HINT_RENDER_GPU_LOW_POWER, opts.low_power_gpu ? "1" : "0");
 
   SDL_SetLogOutputFunction(sdl_log_bridge, sdl);
   SDL_SetLogPriorities(wlog_to_sdl(WLog_GetLogLevel(sdl->getWLog())));

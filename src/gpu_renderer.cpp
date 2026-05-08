@@ -42,10 +42,6 @@ void GpuRenderer::ensure_texture(int width, int height) {
 }
 
 void GpuRenderer::upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count) {
-  if (count == 0) {
-    SDL_UpdateTexture(frame_tex_, nullptr, gdi->primary_buffer, gdi->stride);
-    return;
-  }
   for (int i = 0; i < count; i++) {
     auto& r = rects[i];
     auto* src = gdi->primary_buffer + r.y * gdi->stride + r.x * 4;
