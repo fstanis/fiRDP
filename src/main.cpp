@@ -20,8 +20,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sdl_prefs.hpp>
 #include <string>
+#include <string_view>
 
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
@@ -66,7 +68,7 @@ struct Args {
 
   bool prefer_h264 = false;
   bool low_latency = false;
-  int display = -1;
+  std::optional<int> display;
   std::string rdp_path;
   std::vector<std::string> rdp_overrides;
 };
@@ -74,7 +76,7 @@ struct Args {
 std::string read_password(const std::string& prompt) {
   std::cerr << prompt;
 
-  struct termios old_term{};
+  struct termios old_term {};
   tcgetattr(STDIN_FILENO, &old_term);
   auto new_term = old_term;
   new_term.c_lflag &= ~ECHO;
@@ -88,7 +90,7 @@ std::string read_password(const std::string& prompt) {
   return password;
 }
 
-void usage(const char* prog) {
+void usage(std::string_view prog) {
   std::cerr << "Usage: " << prog << " [options] <file.rdp | rdp://...> [-- \"key:type:value\" ...]\n"
             << "\nOptions:\n"
             << "  -c, --connect            Connect immediately (skip confirmation)\n"
@@ -96,7 +98,7 @@ void usage(const char* prog) {
             << "  -g, --grab-keyboard      Grab keyboard (requires Accessibility on macOS)\n"
             << "  -s, --native-scale       Override desktop scale factor with local display scale\n"
             << "      --native-resolution  Use display's native panel resolution (macOS only)\n"
-            << "  -d, --display <n>        Use display number n (0-indexed)\n"
+            << "  -d, --display <n>        Use display index n (0-indexed)\n"
             << "      --no-wayland         Force X11 backend instead of Wayland (Linux only)\n"
             << "      --prefer-h264        Hint server to prefer H.264\n"
             << "      --low-latency        Send QoE feedback and suspend per-frame acks\n"

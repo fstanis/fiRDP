@@ -19,17 +19,19 @@
 #include <SDL3/SDL.h>
 #include <freerdp/freerdp.h>
 
+#include <span>
+
 class GpuRenderer {
  public:
   ~GpuRenderer();
 
   void init(SDL_Renderer* renderer);
-  void draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count);
+  void draw_frame(rdpGdi* gdi, std::span<const SDL_Rect> rects);
   void present();
 
  private:
   void ensure_texture(int width, int height);
-  void upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count);
+  void upload_regions(rdpGdi* gdi, std::span<const SDL_Rect> rects);
 
   SDL_Renderer* renderer_ = nullptr;
   SDL_Texture* frame_tex_ = nullptr;

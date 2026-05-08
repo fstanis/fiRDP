@@ -18,6 +18,27 @@
 
 #include <freerdp/gdi/gdi.h>
 
+#include <algorithm>
+
+namespace {
+
+SDL_Rect bounding_rect(std::span<const SDL_Rect> rects) {
+  SDL_Rect bb = rects[0];
+  int x2 = bb.x + bb.w;
+  int y2 = bb.y + bb.h;
+  for (const auto& r : rects.subspan(1)) {
+    bb.x = std::min(bb.x, r.x);
+    bb.y = std::min(bb.y, r.y);
+    x2 = std::max(x2, r.x + r.w);
+    y2 = std::max(y2, r.y + r.h);
+  }
+  bb.w = x2 - bb.x;
+  bb.h = y2 - bb.y;
+  return bb;
+}
+
+}  // namespace
+
 GpuRenderer::~GpuRenderer() {
   if (frame_tex_) {
     SDL_DestroyTexture(frame_tex_);
@@ -41,19 +62,16 @@ void GpuRenderer::ensure_texture(int width, int height) {
   SDL_SetRenderLogicalPresentation(renderer_, width, height, SDL_LOGICAL_PRESENTATION_STRETCH);
 }
 
-void GpuRenderer::upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count) {
-  if (count == 0) {
-    SDL_UpdateTexture(frame_tex_, nullptr, gdi->primary_buffer, gdi->stride);
+void GpuRenderer::upload_regions(rdpGdi* gdi, std::span<const SDL_Rect> rects) {
+  if (rects.empty()) {
     return;
   }
-  for (int i = 0; i < count; i++) {
-    auto& r = rects[i];
-    auto* src = gdi->primary_buffer + r.y * gdi->stride + r.x * 4;
-    SDL_UpdateTexture(frame_tex_, &r, src, gdi->stride);
-  }
+  SDL_Rect bb = bounding_rect(rects);
+  auto* src = gdi->primary_buffer + bb.y * gdi->stride + bb.x * 4;
+  SDL_UpdateTexture(frame_tex_, &bb, src, gdi->stride);
 }
 
-void GpuRenderer::draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count) {
+void GpuRenderer::draw_frame(rdpGdi* gdi, std::span<const SDL_Rect> rects) {
   if (!renderer_ || !gdi || !gdi->primary_buffer) {
     return;
   }
@@ -61,7 +79,7 @@ void GpuRenderer::draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count) {
   if (!frame_tex_) {
     return;
   }
-  upload_regions(gdi, rects, count);
+  upload_regions(gdi, rects);
   SDL_RenderTexture(renderer_, frame_tex_, nullptr, nullptr);
 }
 

@@ -44,6 +44,7 @@
 #include <winpr/synch.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,8 +57,19 @@
 #define TAG CLIENT_TAG("fiRDP")
 
 #ifdef __APPLE__
+static void disable_macos_press_and_hold() {
+  CFPreferencesSetAppValue(CFSTR("ApplePressAndHoldEnabled"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
+}
+
+static bool is_autorepeat(CGEventRef event) {
+  return CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat) != 0;
+}
+
 static CGEventRef event_tap_callback(CGEventTapProxy, CGEventType type, CGEventRef event, void*) {
   if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+    return event;
+  }
+  if (type == kCGEventKeyDown && is_autorepeat(event)) {
     return event;
   }
   CGEventPost(kCGAnnotatedSessionEventTap, event);
@@ -117,8 +129,6 @@ static constexpr struct {
   const char* key;
   const char* value;
 } kPostInitHints[] = {
-    {SDL_HINT_RENDER_GPU_LOW_POWER, "0"},
-    {SDL_HINT_RENDER_VSYNC, "0"},
     {SDL_HINT_VIDEO_SYNC_WINDOW_OPERATIONS, "0"},
     {SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "0"},
     {SDL_HINT_PEN_MOUSE_EVENTS, "0"},
@@ -128,7 +138,10 @@ static constexpr struct {
 #endif
     {SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1"},
 #ifdef __APPLE__
+    {SDL_HINT_RENDER_VSYNC, "1"},
     {SDL_HINT_RENDER_DRIVER, "metal"},
+#else
+    {SDL_HINT_RENDER_VSYNC, "0"},
 #endif
 };
 
@@ -281,22 +294,31 @@ static SDL_FPoint decode_pointer_position(const SDL_Event& ev) {
 
 static void drain_and_render(SdlContext* sdl, GpuRenderer& gpu) {
   std::vector<SDL_Rect> all_rects;
-  std::vector<SDL_Rect> rects;
-  do {
-    rects = sdl->pop();
+  for (auto rects = sdl->pop(); !rects.empty(); rects = sdl->pop()) {
     all_rects.insert(all_rects.end(), rects.begin(), rects.end());
-  } while (!rects.empty());
+  }
+  if (all_rects.empty()) {
+    return;
+  }
 
   auto* gdi = sdl->context()->gdi;
-  if (gdi) {
-    gpu.draw_frame(gdi, all_rects.data(), static_cast<int>(all_rects.size()));
-    gpu.present();
+  if (!gdi) {
+    return;
+  }
+  gpu.draw_frame(gdi, all_rects);
+  gpu.present();
+
+  SDL_Event drained;
+  while (SDL_PeepEvents(&drained, 1, SDL_GETEVENT, SDL_EVENT_USER_UPDATE, SDL_EVENT_USER_UPDATE) > 0) {
   }
 }
 
 static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
   const auto& host_keys = opts.host_keys;
   GpuRenderer gpu;
+#ifdef __APPLE__
+  std::optional<EventTapGuard> event_tap;
+#endif
 
   try {
     while (!sdl->shallAbort()) {
@@ -389,6 +411,14 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
           break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
+#ifdef __APPLE__
+          if (opts.grab_keyboard && !event_tap) {
+            event_tap.emplace(true);
+            if (!event_tap->tap) {
+              WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
+            }
+          }
+#endif
           if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
             if (auto* w = sdl->getWindowForId(ev.window.windowID)) {
               if (!w->grabKeyboard(true)) {
@@ -470,17 +500,14 @@ static Result init_freerdp(rdpFile* file,
     freerdp_settings_set_bool(settings, FreeRDP_GfxSuspendFrameAck, TRUE);
   }
 
-  if (opts.display >= 0) {
-    auto id = static_cast<UINT32>(opts.display);
-    freerdp_settings_set_pointer_len(settings, FreeRDP_MonitorIds, &id, 1);
-  }
-
   return {};
 }
 
 static Result init_sdl(SdlContext* sdl, const SessionOptions& opts) {
   apply_hints(kPreInitHints);
-#ifndef __APPLE__
+#ifdef __APPLE__
+  disable_macos_press_and_hold();
+#else
   if (!opts.no_wayland) {
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
   }
@@ -536,8 +563,8 @@ static BOOL wrapped_preconnect(freerdp* instance) {
   return TRUE;
 }
 
-static void apply_native_resolution(SdlContext* sdl) {
-  s_native_override = DisplayInfo::native_display();
+static void apply_native_resolution(SdlContext* sdl, const DisplayInfo& info) {
+  s_native_override = info.native_display();
   if (s_native_override.pixel_w == 0) {
     return;
   }
@@ -548,8 +575,37 @@ static void apply_native_resolution(SdlContext* sdl) {
 
 #endif
 
-static void apply_native_scale(SdlContext* sdl, bool native_resolution) {
-  auto pct = DisplayInfo::scale_percent(native_resolution);
+static std::expected<std::optional<SDL_DisplayID>, std::string> resolve_display_id(std::optional<int> index) {
+  if (!index.has_value()) {
+    return std::optional<SDL_DisplayID>{};
+  }
+  if (*index < 0) {
+    return std::unexpected(std::string("display index must be non-negative"));
+  }
+  int count = 0;
+  auto* ids = SDL_GetDisplays(&count);
+  if (!ids) {
+    return std::unexpected(std::string("SDL_GetDisplays failed: ") + SDL_GetError());
+  }
+  std::optional<SDL_DisplayID> result;
+  if (*index < count) {
+    result = ids[*index];
+  }
+  SDL_free(ids);
+  if (!result.has_value()) {
+    return std::unexpected("display index " + std::to_string(*index) + " out of range (have " + std::to_string(count) +
+                           " displays)");
+  }
+  return result;
+}
+
+static void apply_monitor_id(SdlContext* sdl, SDL_DisplayID id) {
+  auto value = static_cast<UINT32>(id);
+  freerdp_settings_set_pointer_len(sdl->context()->settings, FreeRDP_MonitorIds, &value, 1);
+}
+
+static void apply_native_scale(SdlContext* sdl, bool native_resolution, const DisplayInfo& info) {
+  auto pct = info.scale_percent(native_resolution);
   if (pct == 0) {
     return;
   }
@@ -585,13 +641,23 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     return fail("Failed to detect displays");
   }
 
+  auto display_id = resolve_display_id(opts.display);
+  if (!display_id) {
+    cleanup();
+    return fail(display_id.error());
+  }
+  if (display_id->has_value()) {
+    apply_monitor_id(sdl, **display_id);
+  }
+  auto info = DisplayInfo(display_id->value_or(0));
+
 #ifdef __APPLE__
   if (opts.native_resolution && freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_Fullscreen)) {
-    apply_native_resolution(sdl);
+    apply_native_resolution(sdl, info);
   }
 #endif
   if (opts.native_scale) {
-    apply_native_scale(sdl, opts.native_resolution);
+    apply_native_scale(sdl, opts.native_resolution, info);
   }
 
   auto* context = sdl->context();
@@ -605,13 +671,6 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     cleanup();
     return fail("Failed to start RDP connection");
   }
-
-#ifdef __APPLE__
-  EventTapGuard event_tap(opts.grab_keyboard);
-  if (opts.grab_keyboard && !event_tap.tap) {
-    WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
-  }
-#endif
 
   int rc = event_loop(sdl, opts);
 

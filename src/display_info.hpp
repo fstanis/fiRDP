@@ -16,6 +16,12 @@
 
 #pragma once
 
+#include <SDL3/SDL_video.h>
+
+#ifdef __APPLE__
+#include <CoreGraphics/CoreGraphics.h>
+#endif
+
 #include <cstdint>
 
 struct NativeDisplay {
@@ -27,6 +33,14 @@ struct NativeDisplay {
 
 class DisplayInfo {
  public:
-  static NativeDisplay native_display();
-  static uint32_t scale_percent(bool native_resolution);
+  explicit DisplayInfo(SDL_DisplayID display = 0);
+
+  NativeDisplay native_display() const;
+  uint32_t scale_percent(bool native_resolution) const;
+
+ private:
+  SDL_DisplayID sdl_id_;
+#ifdef __APPLE__
+  CGDirectDisplayID cg_id_;
+#endif
 };

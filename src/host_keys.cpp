@@ -21,7 +21,8 @@
 #include <algorithm>
 #include <iostream>
 #include <optional>
-#include <sstream>
+#include <ranges>
+#include <string_view>
 
 namespace {
 
@@ -43,35 +44,24 @@ constexpr ModName kModNames[] = {
 // clang-format on
 
 std::string to_lower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+  std::ranges::transform(s, s.begin(), ::tolower);
   return s;
 }
 
-std::vector<std::string> split(const std::string& s, char delim) {
-  std::vector<std::string> parts;
-  std::istringstream ss(s);
-  std::string token;
-  while (std::getline(ss, token, delim)) {
-    parts.push_back(token);
-  }
-  return parts;
+std::vector<std::string> split(std::string_view s, char delim) {
+  return s | std::views::split(delim) | std::views::transform([](auto r) { return std::string(r.begin(), r.end()); }) |
+         std::ranges::to<std::vector>();
 }
 
 std::optional<SDL_Keymod> parse_modifiers(const std::vector<std::string>& parts) {
   SDL_Keymod mods = SDL_KMOD_NONE;
   for (size_t i = 0; i + 1 < parts.size(); i++) {
     auto lower = to_lower(parts[i]);
-    bool found = false;
-    for (const auto& [name, mod] : kModNames) {
-      if (lower == name) {
-        mods = static_cast<SDL_Keymod>(mods | mod);
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
+    auto it = std::ranges::find_if(kModNames, [&](const ModName& m) { return lower == m.name; });
+    if (it == std::ranges::end(kModNames)) {
       return std::nullopt;
     }
+    mods = static_cast<SDL_Keymod>(mods | it->mod);
   }
   return mods;
 }
@@ -104,11 +94,7 @@ std::vector<HostKey> parse_host_keys(const std::vector<std::string>& specs) {
   return result;
 }
 
-bool is_host_key(const std::vector<HostKey>& keys, SDL_Keymod mods, SDL_Scancode scancode) {
-  for (const auto& [key_mods, key_scancode] : keys) {
-    if (scancode == key_scancode && (mods & key_mods) == key_mods) {
-      return true;
-    }
-  }
-  return false;
+bool is_host_key(std::span<const HostKey> keys, SDL_Keymod mods, SDL_Scancode scancode) {
+  return std::ranges::any_of(keys,
+                             [&](const HostKey& k) { return scancode == k.scancode && (mods & k.mods) == k.mods; });
 }

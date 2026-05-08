@@ -19,6 +19,7 @@
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_scancode.h>
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -29,4 +30,4 @@ struct HostKey {
 
 std::vector<HostKey> parse_host_keys(const std::vector<std::string>& specs);
 
-bool is_host_key(const std::vector<HostKey>& keys, SDL_Keymod mods, SDL_Scancode scancode);
+bool is_host_key(std::span<const HostKey> keys, SDL_Keymod mods, SDL_Scancode scancode);
