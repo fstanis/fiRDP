@@ -66,8 +66,6 @@ struct Args {
 
   bool prefer_h264 = false;
   bool low_latency = false;
-  bool vsync = false;
-  bool low_power_gpu = false;
   int display = -1;
   std::string rdp_path;
   std::vector<std::string> rdp_overrides;
@@ -102,8 +100,6 @@ void usage(const char* prog) {
             << "      --no-wayland         Force X11 backend instead of Wayland (Linux only)\n"
             << "      --prefer-h264        Hint server to prefer H.264\n"
             << "      --low-latency        Send QoE feedback and suspend per-frame acks\n"
-            << "      --vsync              Enable renderer vsync (TEMPORARY: perf experiment)\n"
-            << "      --low-power-gpu      Prefer low-power GPU (TEMPORARY: perf experiment)\n"
             << "  -h, --help               Show this help\n"
             << "\nRDP parameter overrides (after --):\n"
             << "  \"key:type:value\"  e.g. \"use redirection server name:i:0\"\n"
@@ -153,10 +149,6 @@ Args parse_args(int argc, char* argv[]) {
       args.prefer_h264 = true;
     } else if (arg == "--low-latency") {
       args.low_latency = true;
-    } else if (arg == "--vsync") {
-      args.vsync = true;
-    } else if (arg == "--low-power-gpu") {
-      args.low_power_gpu = true;
     } else if (arg == "-h" || arg == "--help") {
       usage(argv[0]);
       std::exit(0);
@@ -289,8 +281,6 @@ int main(int argc, char* argv[]) {
                       .no_wayland = args.no_wayland,
                       .prefer_h264 = args.prefer_h264,
                       .low_latency = args.low_latency,
-                      .vsync = args.vsync,
-                      .low_power_gpu = args.low_power_gpu,
                       .display = args.display,
                       .host_keys = host_keys});
 }

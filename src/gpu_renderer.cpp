@@ -16,7 +16,28 @@
 
 #include "gpu_renderer.hpp"
 
+#include <algorithm>
 #include <freerdp/gdi/gdi.h>
+
+namespace {
+
+SDL_Rect bounding_rect(const SDL_Rect* rects, int count) {
+  SDL_Rect bb = rects[0];
+  int x2 = bb.x + bb.w;
+  int y2 = bb.y + bb.h;
+  for (int i = 1; i < count; i++) {
+    const auto& r = rects[i];
+    bb.x = std::min(bb.x, r.x);
+    bb.y = std::min(bb.y, r.y);
+    x2 = std::max(x2, r.x + r.w);
+    y2 = std::max(y2, r.y + r.h);
+  }
+  bb.w = x2 - bb.x;
+  bb.h = y2 - bb.y;
+  return bb;
+}
+
+}  // namespace
 
 GpuRenderer::~GpuRenderer() {
   if (frame_tex_) {
@@ -42,11 +63,12 @@ void GpuRenderer::ensure_texture(int width, int height) {
 }
 
 void GpuRenderer::upload_regions(rdpGdi* gdi, const SDL_Rect* rects, int count) {
-  for (int i = 0; i < count; i++) {
-    auto& r = rects[i];
-    auto* src = gdi->primary_buffer + r.y * gdi->stride + r.x * 4;
-    SDL_UpdateTexture(frame_tex_, &r, src, gdi->stride);
+  if (count == 0) {
+    return;
   }
+  SDL_Rect bb = bounding_rect(rects, count);
+  auto* src = gdi->primary_buffer + bb.y * gdi->stride + bb.x * 4;
+  SDL_UpdateTexture(frame_tex_, &bb, src, gdi->stride);
 }
 
 void GpuRenderer::draw_frame(rdpGdi* gdi, const SDL_Rect* rects, int count) {

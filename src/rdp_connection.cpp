@@ -44,6 +44,7 @@
 #include <winpr/synch.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,8 +57,22 @@
 #define TAG CLIENT_TAG("fiRDP")
 
 #ifdef __APPLE__
+static void disable_macos_press_and_hold() {
+  CFPreferencesSetAppValue(
+      CFSTR("ApplePressAndHoldEnabled"),
+      kCFBooleanFalse,
+      kCFPreferencesCurrentApplication);
+}
+
+static bool is_autorepeat(CGEventRef event) {
+  return CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat) != 0;
+}
+
 static CGEventRef event_tap_callback(CGEventTapProxy, CGEventType type, CGEventRef event, void*) {
   if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+    return event;
+  }
+  if (type == kCGEventKeyDown && is_autorepeat(event)) {
     return event;
   }
   CGEventPost(kCGAnnotatedSessionEventTap, event);
@@ -126,7 +141,10 @@ static constexpr struct {
 #endif
     {SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1"},
 #ifdef __APPLE__
+    {SDL_HINT_RENDER_VSYNC, "1"},
     {SDL_HINT_RENDER_DRIVER, "metal"},
+#else
+    {SDL_HINT_RENDER_VSYNC, "0"},
 #endif
 };
 
@@ -301,6 +319,9 @@ static void drain_and_render(SdlContext* sdl, GpuRenderer& gpu) {
 static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
   const auto& host_keys = opts.host_keys;
   GpuRenderer gpu;
+#ifdef __APPLE__
+  std::optional<EventTapGuard> event_tap;
+#endif
 
   try {
     while (!sdl->shallAbort()) {
@@ -393,6 +414,14 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
           break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
+#ifdef __APPLE__
+          if (opts.grab_keyboard && !event_tap) {
+            event_tap.emplace(true);
+            if (!event_tap->tap) {
+              WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
+            }
+          }
+#endif
           if (freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_GrabKeyboard)) {
             if (auto* w = sdl->getWindowForId(ev.window.windowID)) {
               if (!w->grabKeyboard(true)) {
@@ -484,7 +513,9 @@ static Result init_freerdp(rdpFile* file,
 
 static Result init_sdl(SdlContext* sdl, const SessionOptions& opts) {
   apply_hints(kPreInitHints);
-#ifndef __APPLE__
+#ifdef __APPLE__
+  disable_macos_press_and_hold();
+#else
   if (!opts.no_wayland) {
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
   }
@@ -495,12 +526,6 @@ static Result init_sdl(SdlContext* sdl, const SessionOptions& opts) {
   }
 
   apply_hints(kPostInitHints);
-
-  // TEMPORARY: exposed as CLI flags (--vsync, --low-power-gpu) while we figure
-  // out the right defaults for macOS Metal vs Linux. Remove the flags and bake
-  // the chosen values back into kPostInitHints once that's settled.
-  SDL_SetHint(SDL_HINT_RENDER_VSYNC, opts.vsync ? "1" : "0");
-  SDL_SetHint(SDL_HINT_RENDER_GPU_LOW_POWER, opts.low_power_gpu ? "1" : "0");
 
   SDL_SetLogOutputFunction(sdl_log_bridge, sdl);
   SDL_SetLogPriorities(wlog_to_sdl(WLog_GetLogLevel(sdl->getWLog())));
@@ -615,13 +640,6 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     cleanup();
     return fail("Failed to start RDP connection");
   }
-
-#ifdef __APPLE__
-  EventTapGuard event_tap(opts.grab_keyboard);
-  if (opts.grab_keyboard && !event_tap.tap) {
-    WLog_Print(sdl->getWLog(), WLOG_WARN, "Failed to create CGEventTap");
-  }
-#endif
 
   int rc = event_loop(sdl, opts);
 
