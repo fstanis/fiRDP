@@ -36,6 +36,8 @@
 #include <freerdp/error.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
+#include <freerdp/locale/keyboard.h>
+#include <winpr/timezone.h>
 #include <freerdp/log.h>
 #include <freerdp/streamdump.h>
 #include <freerdp/utils/signal.h>
@@ -142,6 +144,7 @@ static constexpr struct {
     {SDL_HINT_RENDER_DRIVER, "metal"},
 #else
     {SDL_HINT_RENDER_VSYNC, "0"},
+    {SDL_HINT_RENDER_DRIVER, "vulkan,opengl"},
 #endif
 };
 
@@ -483,6 +486,14 @@ static Result init_freerdp(rdpFile* file,
   }
 
   freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, TRUE);
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  DWORD layout = freerdp_keyboard_init(0);
+#pragma clang diagnostic pop
+  if (layout != 0) {
+    freerdp_settings_set_uint32(settings, FreeRDP_KeyboardLayout, layout);
+  }
 
   if (opts.grab_keyboard) {
     freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, TRUE);
