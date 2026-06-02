@@ -486,6 +486,12 @@ static Result init_freerdp(rdpFile* file,
   }
 
   freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, TRUE);
+  freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, TRUE);
+  freerdp_settings_set_bool(settings, FreeRDP_TcpKeepAlive, TRUE);
+  freerdp_settings_set_uint32(settings, FreeRDP_TcpKeepAliveDelay, 2);
+  freerdp_settings_set_uint32(settings, FreeRDP_TcpKeepAliveInterval, 1);
+  freerdp_settings_set_uint32(settings, FreeRDP_TcpKeepAliveRetries, 3);
+  freerdp_settings_set_uint32(settings, FreeRDP_TcpAckTimeout, 3000);
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
