@@ -74,6 +74,11 @@ SSIZE_T sdl_retry_dialog(freerdp* instance, const char* what, size_t current, [[
   WINPR_ASSERT(instance->context);
   WINPR_ASSERT(what);
 
+  if (freerdp_shall_disconnect_context(instance->context)) {
+    WLog_INFO(TAG, "Disconnect requested, aborting reconnect");
+    return -1;
+  }
+
   auto settings = instance->context->settings;
   const BOOL enabled = freerdp_settings_get_bool(settings, FreeRDP_AutoReconnectionEnabled);
   const size_t delay = freerdp_settings_get_uint32(settings, FreeRDP_TcpConnectTimeout);
