@@ -191,6 +191,7 @@ std::unique_ptr<RdpFile> load_rdp(const std::string& input, const std::vector<st
     if (!overrides.empty()) {
       rdp->apply_overrides(overrides);
     }
+    rdp->default_to_fullscreen();
     return rdp;
   } catch (const std::exception& e) {
     std::cerr << "Error: " << e.what() << '\n';

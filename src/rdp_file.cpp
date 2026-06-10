@@ -23,6 +23,12 @@
 #include <sstream>
 #include <stdexcept>
 
+namespace {
+constexpr const char* kScreenModeKey = "screen mode id";
+constexpr int kScreenModeFullscreen = 2;
+constexpr int kScreenModeUnspecified = -1;
+}  // namespace
+
 std::unique_ptr<RdpFile> RdpFile::parse(const std::string& path) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
@@ -127,6 +133,17 @@ void RdpFile::apply_overrides(const std::vector<std::string>& overrides) {
   }
 }
 
+bool RdpFile::screen_mode_specified() const {
+  return get_int(kScreenModeKey) != kScreenModeUnspecified;
+}
+
+void RdpFile::default_to_fullscreen() {
+  if (screen_mode_specified()) {
+    return;
+  }
+  freerdp_client_rdp_file_set_integer_option(file_, kScreenModeKey, kScreenModeFullscreen);
+}
+
 void RdpFile::validate() const {
   if (server().empty()) {
     throw std::runtime_error("Missing required field: full address");
@@ -211,8 +228,8 @@ void RdpFile::print(std::ostream& out) const {
   num("Color Depth", "session bpp");
   num("Scale Factor", "desktopscalefactor");
 
-  auto mode = get_int("screen mode id");
-  if (mode == 2) {
+  auto mode = get_int(kScreenModeKey);
+  if (mode == kScreenModeFullscreen) {
     out << std::left << std::setw(w) << "Screen Mode" << "fullscreen" << '\n';
   } else {
     out << std::left << std::setw(w) << "Screen Mode" << "windowed" << '\n';

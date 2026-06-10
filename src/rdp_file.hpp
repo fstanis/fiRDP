@@ -34,6 +34,7 @@ class RdpFile {
 
   void validate() const;
   void apply_overrides(const std::vector<std::string>& overrides);
+  void default_to_fullscreen();
   void print(std::ostream& out) const;
 
   std::string server() const;
@@ -47,6 +48,7 @@ class RdpFile {
  private:
   explicit RdpFile(rdpFile* file);
   std::string get_string(const char* name) const;
+  bool screen_mode_specified() const;
 
   rdpFile* file_;
 };
