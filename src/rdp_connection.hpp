@@ -22,6 +22,7 @@
 
 #include <freerdp/client/file.h>
 
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -48,6 +49,9 @@ struct SessionOptions {
 
   bool prefer_h264 = false;
   bool low_latency = false;
+  bool no_key_repeat = false;
+  bool takeover = false;
+  uint32_t resolution_height = 0;
   std::optional<int> display;
   std::vector<HostKey> host_keys;
 };

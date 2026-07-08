@@ -343,6 +343,9 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
           std::ignore = freerdp_abort_connect_context(sdl->context());
           break;
         case SDL_EVENT_KEY_DOWN:
+          if (opts.no_key_repeat && ev.key.repeat) {
+            break;
+          }
           handle_key_event(sdl, ev);
           if (!host_keys.empty() && is_host_key(host_keys, SDL_GetModState(), ev.key.scancode)) {
             break;
@@ -509,6 +512,12 @@ static Result init_freerdp(rdpFile* file,
     freerdp_settings_set_bool(settings, FreeRDP_GrabKeyboard, FALSE);
   }
 
+  if (opts.takeover) {
+    freerdp_settings_set_bool(settings, FreeRDP_ConsoleSession, TRUE);
+  }
+
+  freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE);
+
   if (opts.prefer_h264) {
     freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE);
@@ -557,39 +566,71 @@ static SessionError classify_exit(rdpContext* context, int exit_code) {
   return SessionError::kGeneral;
 }
 
-#ifdef __APPLE__
+struct ResolutionOverride {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t scale = 0;
+};
 
-static NativeDisplay s_native_override{};
+static ResolutionOverride s_resolution_override{};
 static BOOL (*s_original_preconnect)(freerdp*) = nullptr;
+
+static void write_monitor_resolution(rdpSettings* settings, const ResolutionOverride& o) {
+  freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, o.width);
+  freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, o.height);
+  if (o.scale != 0) {
+    freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, o.scale);
+  }
+  if (freerdp_settings_get_uint32(settings, FreeRDP_MonitorCount) == 0) {
+    return;
+  }
+  auto* monitor = static_cast<rdpMonitor*>(
+      freerdp_settings_get_pointer_array_writable(settings, FreeRDP_MonitorDefArray, 0));
+  if (monitor == nullptr) {
+    return;
+  }
+  monitor->width = static_cast<INT32>(o.width);
+  monitor->height = static_cast<INT32>(o.height);
+  if (o.scale != 0) {
+    monitor->attributes.desktopScaleFactor = o.scale;
+  }
+}
 
 static BOOL wrapped_preconnect(freerdp* instance) {
   if (!s_original_preconnect(instance)) {
     return FALSE;
   }
-  if (s_native_override.pixel_w == 0) {
+  if (s_resolution_override.width == 0) {
     return TRUE;
   }
-  auto* settings = instance->context->settings;
-  freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, s_native_override.pixel_w);
-  freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, s_native_override.pixel_h);
+  write_monitor_resolution(instance->context->settings, s_resolution_override);
   WLog_Print(get_context(instance->context)->getWLog(),
              WLOG_INFO,
-             "Native resolution: %ux%u (logical %ux%u)",
-             s_native_override.pixel_w,
-             s_native_override.pixel_h,
-             s_native_override.logical_w,
-             s_native_override.logical_h);
+             "Resolution override: %ux%u @ %u%%",
+             s_resolution_override.width,
+             s_resolution_override.height,
+             s_resolution_override.scale);
   return TRUE;
 }
 
-static void apply_native_resolution(SdlContext* sdl, const DisplayInfo& info) {
-  s_native_override = info.native_display();
-  if (s_native_override.pixel_w == 0) {
+static void install_preconnect_override(SdlContext* sdl, const ResolutionOverride& o) {
+  s_resolution_override = o;
+  auto* instance = sdl->context()->instance;
+  if (instance->PreConnect == wrapped_preconnect) {
     return;
   }
-  auto* instance = sdl->context()->instance;
   s_original_preconnect = instance->PreConnect;
   instance->PreConnect = wrapped_preconnect;
+}
+
+#ifdef __APPLE__
+
+static void apply_native_resolution(SdlContext* sdl, const DisplayInfo& info) {
+  auto native = info.native_display();
+  if (native.pixel_w == 0) {
+    return;
+  }
+  install_preconnect_override(sdl, {native.pixel_w, native.pixel_h, 0});
 }
 
 #endif
@@ -632,6 +673,30 @@ static void apply_native_scale(SdlContext* sdl, bool native_resolution, const Di
   WLog_Print(sdl->getWLog(), WLOG_INFO, "Desktop scale factor: %u%%", pct);
 }
 
+static uint32_t round_even(double value) {
+  auto rounded = static_cast<uint32_t>(value + 0.5);
+  return rounded & ~1u;
+}
+
+static uint32_t width_for_aspect(uint32_t height, const NativeDisplay& display) {
+  double aspect = static_cast<double>(display.pixel_w) / static_cast<double>(display.pixel_h);
+  return round_even(static_cast<double>(height) * aspect);
+}
+
+static void apply_resolution(SdlContext* sdl, const DisplayInfo& info, uint32_t target_height) {
+  auto display = info.backing_size();
+  if (display.pixel_w == 0 || display.pixel_h == 0) {
+    WLog_Print(sdl->getWLog(), WLOG_WARN, "--resolution ignored: display size unavailable");
+    return;
+  }
+  uint32_t height = round_even(target_height);
+  uint32_t width = width_for_aspect(height, display);
+  freerdp_settings_set_bool(sdl->context()->settings, FreeRDP_SmartSizing, TRUE);
+  install_preconnect_override(sdl, {width, height, 0});
+  WLog_Print(sdl->getWLog(), WLOG_INFO, "Resolution %ux%u (matched to display aspect, scaled to fill)", width,
+             height);
+}
+
 std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
                                                     const std::string& password,
                                                     const SessionOptions& opts) {
@@ -670,13 +735,17 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
   }
   auto info = DisplayInfo(display_id->value_or(0));
 
+  if (opts.resolution_height > 0) {
+    apply_resolution(sdl, info, opts.resolution_height);
+  } else {
 #ifdef __APPLE__
-  if (opts.native_resolution && freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_Fullscreen)) {
-    apply_native_resolution(sdl, info);
-  }
+    if (opts.native_resolution && freerdp_settings_get_bool(sdl->context()->settings, FreeRDP_Fullscreen)) {
+      apply_native_resolution(sdl, info);
+    }
 #endif
-  if (opts.native_scale) {
-    apply_native_scale(sdl, opts.native_resolution, info);
+    if (opts.native_scale) {
+      apply_native_scale(sdl, opts.native_resolution, info);
+    }
   }
 
   auto* context = sdl->context();

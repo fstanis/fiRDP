@@ -36,6 +36,7 @@ class DisplayInfo {
   explicit DisplayInfo(SDL_DisplayID display = 0);
 
   NativeDisplay native_display() const;
+  NativeDisplay backing_size() const;
   uint32_t scale_percent(bool native_resolution) const;
 
  private:

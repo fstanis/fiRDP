@@ -111,6 +111,23 @@ NativeDisplay DisplayInfo::native_display() const {
 
 #endif
 
+NativeDisplay DisplayInfo::backing_size() const {
+  const auto* mode = SDL_GetDesktopDisplayMode(sdl_id_);
+  if (!mode || mode->w <= 0 || mode->h <= 0) {
+    return {};
+  }
+  float density = mode->pixel_density;
+  if (density <= 0.0f) {
+    density = 1.0f;
+  }
+  NativeDisplay result{};
+  result.logical_w = static_cast<uint32_t>(mode->w);
+  result.logical_h = static_cast<uint32_t>(mode->h);
+  result.pixel_w = static_cast<uint32_t>(static_cast<float>(mode->w) * density);
+  result.pixel_h = static_cast<uint32_t>(static_cast<float>(mode->h) * density);
+  return result;
+}
+
 uint32_t DisplayInfo::scale_percent(bool native_resolution) const {
 #ifdef __APPLE__
   if (native_resolution) {

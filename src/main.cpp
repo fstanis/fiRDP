@@ -17,6 +17,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -24,6 +25,7 @@
 #include <sdl_prefs.hpp>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
@@ -68,10 +70,50 @@ struct Args {
 
   bool prefer_h264 = false;
   bool low_latency = false;
+  bool no_key_repeat = false;
+  bool takeover = false;
+  uint32_t resolution_height = 0;
   std::optional<int> display;
   std::string rdp_path;
   std::vector<std::string> rdp_overrides;
 };
+
+std::string to_lower(std::string value) {
+  for (auto& c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return value;
+}
+
+std::optional<uint32_t> resolution_alias(const std::string& value) {
+  static const std::unordered_map<std::string, uint32_t> kAliases = {
+      {"2k", 1440}, {"4k", 2160}, {"8k", 4320}, {"fhd", 1080}, {"qhd", 1440}, {"uhd", 2160}};
+  auto it = kAliases.find(value);
+  if (it == kAliases.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+std::optional<uint32_t> parse_resolution(const std::string& raw) {
+  std::string value = to_lower(raw);
+  if (auto alias = resolution_alias(value)) {
+    return alias;
+  }
+  if (value.ends_with("p")) {
+    value.pop_back();
+  }
+  try {
+    size_t consumed = 0;
+    int height = std::stoi(value, &consumed);
+    if (consumed != value.size() || height < 240 || height > 8640) {
+      return std::nullopt;
+    }
+    return static_cast<uint32_t>(height);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
 
 std::string read_password(const std::string& prompt) {
   std::cerr << prompt;
@@ -102,6 +144,11 @@ void usage(std::string_view prog) {
             << "      --no-wayland         Force X11 backend instead of Wayland (Linux only)\n"
             << "      --prefer-h264        Hint server to prefer H.264\n"
             << "      --low-latency        Send QoE feedback and suspend per-frame acks\n"
+            << "      --resolution <res>   Set the remote desktop resolution, matched to the display's\n"
+            << "                           aspect ratio and scaled to fill. Accepts 1080p, 1440p,\n"
+            << "                           2160p, 2k, 4k, 8k, or a height in pixels (not --native-*)\n"
+            << "      --takeover           Connect to the admin/console session (xfreerdp /admin)\n"
+            << "      --no-key-repeat      Drop local key-repeat events; let the server autorepeat\n"
             << "  -h, --help               Show this help\n"
             << "\nRDP parameter overrides (after --):\n"
             << "  \"key:type:value\"  e.g. \"use redirection server name:i:0\"\n"
@@ -142,7 +189,13 @@ Args parse_args(int argc, char* argv[]) {
         std::cerr << "Error: --display requires an argument\n";
         std::exit(1);
       }
-      args.display = std::stoi(argv[++i]);
+      std::string value = argv[++i];
+      try {
+        args.display = std::stoi(value);
+      } catch (const std::exception&) {
+        std::cerr << "Error: --display requires a numeric argument, got '" << value << "'\n";
+        std::exit(1);
+      }
     } else if (arg == "--no-wayland") {
 #ifndef __APPLE__
       args.no_wayland = true;
@@ -151,6 +204,23 @@ Args parse_args(int argc, char* argv[]) {
       args.prefer_h264 = true;
     } else if (arg == "--low-latency") {
       args.low_latency = true;
+    } else if (arg == "--takeover") {
+      args.takeover = true;
+    } else if (arg == "--resolution") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --resolution requires an argument\n";
+        std::exit(1);
+      }
+      std::string value = argv[++i];
+      auto height = parse_resolution(value);
+      if (!height.has_value()) {
+        std::cerr << "Error: --resolution '" << value
+                  << "' not recognized (try 1080p, 1440p, 2160p, 2k, 4k, or a height in pixels)\n";
+        std::exit(1);
+      }
+      args.resolution_height = *height;
+    } else if (arg == "--no-key-repeat") {
+      args.no_key_repeat = true;
     } else if (arg == "-h" || arg == "--help") {
       usage(argv[0]);
       std::exit(0);
@@ -164,6 +234,10 @@ Args parse_args(int argc, char* argv[]) {
   }
   if (args.rdp_path.empty()) {
     usage(argv[0]);
+    std::exit(1);
+  }
+  if (args.resolution_height > 0 && (args.native_scale || args.native_resolution)) {
+    std::cerr << "Error: --resolution cannot be combined with --native-scale or --native-resolution\n";
     std::exit(1);
   }
   return args;
@@ -284,6 +358,9 @@ int main(int argc, char* argv[]) {
                       .no_wayland = args.no_wayland,
                       .prefer_h264 = args.prefer_h264,
                       .low_latency = args.low_latency,
+                      .no_key_repeat = args.no_key_repeat,
+                      .takeover = args.takeover,
+                      .resolution_height = args.resolution_height,
                       .display = args.display,
                       .host_keys = host_keys});
 }
