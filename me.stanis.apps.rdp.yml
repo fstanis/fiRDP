@@ -1,4 +1,4 @@
-app-id: me.stanis.apps.fiRDP
+app-id: me.stanis.apps.rdp
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk

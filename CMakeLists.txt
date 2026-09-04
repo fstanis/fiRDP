@@ -50,6 +50,7 @@ add_executable(fiRDP
     src/rdp_file.cpp
     src/password_store.cpp
     src/rdp_connection.cpp
+    src/server_diagnostics.cpp
     src/host_keys.cpp
     src/gpu_renderer.cpp
     src/display_info.cpp
@@ -119,7 +120,7 @@ install(TARGETS fiRDP
 )
 
 if(NOT APPLE)
-    install(FILES me.stanis.apps.fiRDP.desktop
+    install(FILES me.stanis.apps.rdp.desktop
         DESTINATION share/applications
     )
 endif()

@@ -51,6 +51,7 @@ struct SessionOptions {
   bool low_latency = false;
   bool no_key_repeat = false;
   bool takeover = false;
+  bool auto_login = false;
   uint32_t resolution_height = 0;
   std::optional<int> display;
   std::vector<HostKey> host_keys;

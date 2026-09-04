@@ -76,6 +76,7 @@ struct Args {
   bool low_latency = false;
   bool no_key_repeat = false;
   bool takeover = false;
+  bool auto_login = false;
   uint32_t resolution_height = 0;
   std::optional<int> display;
   std::string rdp_path;
@@ -148,12 +149,14 @@ void usage(std::string_view prog) {
             << "      --native-resolution  Use display's native panel resolution (macOS only)\n"
             << "  -d, --display <n>        Use display index n (0-indexed)\n"
             << "      --no-wayland         Force X11 backend instead of Wayland (Linux only)\n"
-            << "      --prefer-h264        Hint server to prefer H.264\n"
+            << "      --prefer-h264        Prefer H.264, requesting AVC444 when available\n"
             << "      --low-latency        Send QoE feedback and suspend per-frame acks\n"
             << "      --resolution <res>   Set the remote desktop resolution, matched to the display's\n"
             << "                           aspect ratio and scaled to fill. Accepts 1080p, 1440p,\n"
             << "                           2160p, 2k, 4k, 8k, or a height in pixels (not --native-*)\n"
             << "      --takeover           Connect to the admin/console session (xfreerdp /admin)\n"
+            << "      --auto-login         Require NLA, fail instead of falling back (logs in with saved\n"
+            << "                           credentials)\n"
             << "      --no-key-repeat      Drop local key-repeat events; let the server autorepeat\n"
             << "  -h, --help               Show this help\n"
             << "\nRDP parameter overrides (after --):\n"
@@ -218,6 +221,8 @@ Args parse_args(int argc, char* argv[]) {
       args.low_latency = true;
     } else if (arg == "--takeover") {
       args.takeover = true;
+    } else if (arg == "--auto-login") {
+      args.auto_login = true;
     } else if (arg == "--resolution") {
       if (i + 1 >= argc) {
         std::cerr << "Error: --resolution requires an argument\n";
@@ -403,6 +408,7 @@ int main(int argc, char* argv[]) {
                       .low_latency = args.low_latency,
                       .no_key_repeat = args.no_key_repeat,
                       .takeover = args.takeover,
+                      .auto_login = args.auto_login,
                       .resolution_height = args.resolution_height,
                       .display = args.display,
                       .host_keys = host_keys},

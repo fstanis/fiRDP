@@ -6,17 +6,17 @@ GPU-accelerated rendering via SDL3 (Metal on macOS, GPU-accelerated on Linux), h
 
 ## Pre-built binaries
 
-Download the latest build from [GitHub Actions](../../actions/workflows/build.yml): open the most recent successful run and download the artifact for your platform.
+Download the latest build from the [releases page](../../releases/latest).
 
-| Artifact | Platform |
+| Asset | Platform |
 |---|---|
 | `fiRDP-trixie-x86_64` | Linux x86_64 (Debian Trixie) |
 | `fiRDP-trixie-arm64` | Linux arm64 (Debian Trixie) |
-| `fiRDP-flatpak-x86_64` | Linux (Flatpak bundle, x86_64) |
-| `fiRDP-flatpak-arm64` | Linux (Flatpak bundle, arm64) |
-| `fiRDP-macos-arm64` | macOS (Apple Silicon) |
+| `fiRDP-flatpak-x86_64.flatpak` | Linux (Flatpak bundle, x86_64) |
+| `fiRDP-flatpak-arm64.flatpak` | Linux (Flatpak bundle, arm64) |
+| `fiRDP-macos-arm64.zip` | macOS (Apple Silicon) |
 
-On macOS, extract and run `open fiRDP.app -- <file.rdp>`.
+On macOS, unzip and run `open fiRDP.app -- <file.rdp>`.
 
 ### Linux native binary (Debian Trixie)
 
@@ -27,18 +27,16 @@ sudo apt install libsdl3-0 libcups2t64 libusb-1.0-0 libsecret-1-0 \
   libavcodec61 libavutil59 libswscale8 libswresample5
 ```
 
-Then run `./fiRDP <file.rdp>`.
+Then make it executable and run `./fiRDP-trixie-x86_64 <file.rdp>`.
 
 For other distros, use the Flatpak bundle instead - it includes all dependencies.
 
 ### Flatpak (any Linux distro)
 
 ```sh
-flatpak install fiRDP.flatpak
-flatpak run me.stanis.apps.fiRDP <file.rdp>
+flatpak install fiRDP-flatpak-x86_64.flatpak
+flatpak run me.stanis.apps.rdp <file.rdp>
 ```
-
-Note: artifacts require a GitHub account to download and expire after 90 days.
 
 ## Building
 
@@ -70,13 +68,18 @@ fiRDP [options] <file.rdp | rdp://...> [-- "key:type:value" ...]
 Options:
   -c, --connect            Connect immediately (skip confirmation)
   -q, --quiet              Suppress connection info output
+  -v, --verbose            Verbose logging (DEBUG). Repeat (-vv) for TRACE
+      --password-stdin     Read password from stdin; skip the keyring entirely
   -g, --grab-keyboard      Grab keyboard (requires Accessibility on macOS)
   -s, --native-scale       Override desktop scale factor with local display scale
       --native-resolution  Use display's native panel resolution (macOS only)
-  -d, --display <n>        Use display number n (0-indexed)
+  -d, --display <n>        Use display index n (0-indexed)
       --no-wayland         Force X11 backend instead of Wayland (Linux only, not recommended)
       --prefer-h264        Hint server to prefer H.264
       --low-latency        Send QoE feedback and suspend per-frame acks
+      --resolution <res>   Remote desktop resolution: 1080p, 1440p, 2160p, 2k, 4k, 8k, or a height in pixels
+      --takeover           Connect to the admin/console session (xfreerdp /admin)
+      --no-key-repeat      Drop local key-repeat events; let the server autorepeat
   -h, --help               Show this help
 ```
 

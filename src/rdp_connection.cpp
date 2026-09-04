@@ -55,6 +55,7 @@
 #include "sdl_config.hpp"
 #include "sdl_context.hpp"
 #include "sdl_utils.hpp"
+#include "server_diagnostics.hpp"
 
 #define TAG CLIENT_TAG("fiRDP")
 
@@ -316,7 +317,7 @@ static void drain_and_render(SdlContext* sdl, GpuRenderer& gpu) {
   }
 }
 
-static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
+static int event_loop(SdlContext* sdl, const SessionOptions& opts, ServerDiagnostics& diagnostics) {
   const auto& host_keys = opts.host_keys;
   GpuRenderer gpu;
 #ifdef __APPLE__
@@ -325,6 +326,7 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
 
   try {
     while (!sdl->shallAbort()) {
+      diagnostics.poll(sdl, opts);
       SDL_Event ev = {};
       if (!SDL_WaitEventTimeout(&ev, 1000)) {
         continue;
@@ -392,6 +394,7 @@ static int event_loop(SdlContext* sdl, const SessionOptions& opts) {
           if (first) {
             gpu.init(first->renderer());
           }
+          diagnostics.arm();
           break;
         }
         case SDL_EVENT_USER_UPDATE:
@@ -466,6 +469,14 @@ static auto fail(std::string msg) {
   return fail(SessionError::kGeneral, std::move(msg));
 }
 
+static void force_nla(rdpSettings* settings) {
+  freerdp_settings_set_bool(settings, FreeRDP_AadSecurity, FALSE);
+  freerdp_settings_set_bool(settings, FreeRDP_UseRdpSecurityLayer, FALSE);
+  freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE);
+  freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, TRUE);
+  freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, FALSE);
+}
+
 static Result init_freerdp(rdpFile* file,
                            const std::string& password,
                            const SessionOptions& opts,
@@ -486,6 +497,7 @@ static Result init_freerdp(rdpFile* file,
 
   if (!password.empty()) {
     freerdp_settings_set_string(settings, FreeRDP_Password, password.c_str());
+    freerdp_settings_set_bool(settings, FreeRDP_AutoLogonEnabled, TRUE);
   }
 
   freerdp_settings_set_bool(settings, FreeRDP_AutoAcceptCertificate, TRUE);
@@ -516,11 +528,16 @@ static Result init_freerdp(rdpFile* file,
     freerdp_settings_set_bool(settings, FreeRDP_ConsoleSession, TRUE);
   }
 
+  if (opts.auto_login) {
+    force_nla(settings);
+  }
+
   freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE);
 
   if (opts.prefer_h264) {
     freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, TRUE);
     freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, TRUE);
   }
 
   if (opts.low_latency) {
@@ -755,12 +772,15 @@ std::expected<void, SessionFailure> RdpSession::run(rdpFile* file,
     return fail("Failed to register stream handlers");
   }
 
+  ServerDiagnostics diagnostics;
+  diagnostics.install(context);
+
   if (freerdp_client_start(context) != 0) {
     cleanup();
     return fail("Failed to start RDP connection");
   }
 
-  int rc = event_loop(sdl, opts);
+  int rc = event_loop(sdl, opts, diagnostics);
 
   if (freerdp_client_stop(context) != 0) {
     rc = -1;

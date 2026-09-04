@@ -19,7 +19,7 @@
 static const char SDL_CLIENT_NAME[] = "fiRDP";
 static const char SDL_CLIENT_VERSION[] = "1.0.0";
 static const char SDL_CLIENT_VENDOR[] = "fiRDP";
-static const char SDL_CLIENT_UUID[] = "me.stanis.apps.fiRDP";
+static const char SDL_CLIENT_UUID[] = "me.stanis.apps.rdp";
 static const char SDL_CLIENT_COPYRIGHT[] = "Filip Stanis";
 static const char SDL_CLIENT_URL[] = "https://github.com/fstanis/fiRDP";
 static const char SDL_CLIENT_TYPE[] = "application";

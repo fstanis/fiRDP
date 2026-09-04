@@ -39,11 +39,14 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++
           cmake --build build
 
+      - name: Package
+        run: cp build/fiRDP fiRDP-trixie-${{ matrix.arch }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: fiRDP-trixie-${{ matrix.arch }}
-          path: build/fiRDP
+          path: fiRDP-trixie-${{ matrix.arch }}
 
   flatpak:
     runs-on: ${{ matrix.runner }}
@@ -68,14 +71,14 @@ jobs:
 
       - name: Build Flatpak
         run: |
-          flatpak-builder --force-clean --repo=repo builddir me.stanis.apps.fiRDP.yml
-          flatpak build-bundle repo fiRDP.flatpak me.stanis.apps.fiRDP
+          flatpak-builder --force-clean --repo=repo builddir me.stanis.apps.rdp.yml
+          flatpak build-bundle repo fiRDP-flatpak-${{ matrix.arch }}.flatpak me.stanis.apps.rdp
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: fiRDP-flatpak-${{ matrix.arch }}
-          path: fiRDP.flatpak
+          path: fiRDP-flatpak-${{ matrix.arch }}.flatpak
 
   macos:
     runs-on: macos-14
@@ -94,8 +97,34 @@ jobs:
             -DOPENSSL_ROOT_DIR=$(brew --prefix openssl)
           cmake --build build
 
+      - name: Package
+        run: ditto -c -k --sequesterRsrc --keepParent build/fiRDP.app fiRDP-macos-arm64.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: fiRDP-macos-arm64
-          path: build/fiRDP.app
+          path: fiRDP-macos-arm64.zip
+
+  release:
+    needs: [trixie, flatpak, macos]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum fiRDP-* > checksums.txt
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest fiRDP-* checksums.txt \
+            --target "$GITHUB_SHA" \
+            --title "Latest build" \
+            --notes "Automated build of $GITHUB_SHA."
