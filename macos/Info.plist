@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>fiRDP</string>
     <key>CFBundleIdentifier</key>
-    <string>me.stanis.apps.fiRDP</string>
+    <string>me.stanis.apps.rdp</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

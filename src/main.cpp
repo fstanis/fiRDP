@@ -48,6 +48,8 @@ static bool check_accessibility([[maybe_unused]] bool prompt) {
 }
 #endif
 
+#include <winpr/wlog.h>
+
 #include "host_keys.hpp"
 #include "password_store.hpp"
 #include "rdp_connection.hpp"
@@ -63,6 +65,8 @@ constexpr const char* kDefaultConfig = R"({
 struct Args {
   bool auto_connect = false;
   bool quiet = false;
+  int verbose = 0;
+  bool password_stdin = false;
   bool grab_keyboard = false;
   bool native_resolution = false;
   bool native_scale = false;
@@ -137,6 +141,8 @@ void usage(std::string_view prog) {
             << "\nOptions:\n"
             << "  -c, --connect            Connect immediately (skip confirmation)\n"
             << "  -q, --quiet              Suppress connection info output\n"
+            << "  -v, --verbose            Verbose logging (DEBUG). Repeat (-vv) for TRACE\n"
+            << "      --password-stdin     Read password from stdin; skip the keyring entirely\n"
             << "  -g, --grab-keyboard      Grab keyboard (requires Accessibility on macOS)\n"
             << "  -s, --native-scale       Override desktop scale factor with local display scale\n"
             << "      --native-resolution  Use display's native panel resolution (macOS only)\n"
@@ -173,6 +179,12 @@ Args parse_args(int argc, char* argv[]) {
       args.auto_connect = true;
     } else if (arg == "-q" || arg == "--quiet") {
       args.quiet = true;
+    } else if (arg == "-v" || arg == "--verbose") {
+      args.verbose++;
+    } else if (arg == "-vv") {
+      args.verbose += 2;
+    } else if (arg == "--password-stdin") {
+      args.password_stdin = true;
     } else if (arg == "-g" || arg == "--grab-keyboard") {
       args.grab_keyboard = true;
     } else if (arg == "-s" || arg == "--native-scale") {
@@ -273,6 +285,16 @@ std::unique_ptr<RdpFile> load_rdp(const std::string& input, const std::vector<st
   }
 }
 
+std::string read_password_stdin() {
+  std::string password;
+  std::getline(std::cin, password);
+  if (password.empty()) {
+    std::cerr << "Error: --password-stdin set but no password on stdin\n";
+    std::exit(1);
+  }
+  return password;
+}
+
 std::string resolve_password(const std::string& server, const std::string& username, bool quiet) {
   auto password = PasswordStore::lookup(server, username);
   if (!quiet) {
@@ -313,18 +335,22 @@ void confirm_connection(bool auto_connect) {
   std::getline(std::cin, dummy);
 }
 
-int run_session(RdpFile& rdp, const std::string& password, const SessionOptions& opts) {
+int run_session(RdpFile& rdp, const std::string& password, const SessionOptions& opts, bool skip_store) {
   auto result = RdpSession::run(rdp.handle(), password, opts);
   if (result) {
-    PasswordStore::store(rdp.server(), rdp.username(), password);
+    if (!skip_store) {
+      PasswordStore::store(rdp.server(), rdp.username(), password);
+    }
     return 0;
   }
   auto& [code, message] = result.error();
   std::cerr << "Error: " << message << '\n';
-  if (code == SessionError::kLogonFailure) {
-    PasswordStore::remove(rdp.server(), rdp.username());
-  } else {
-    PasswordStore::store(rdp.server(), rdp.username(), password);
+  if (!skip_store) {
+    if (code == SessionError::kLogonFailure) {
+      PasswordStore::remove(rdp.server(), rdp.username());
+    } else {
+      PasswordStore::store(rdp.server(), rdp.username(), password);
+    }
   }
   return code == SessionError::kUserDisconnect ? 0 : 1;
 }
@@ -333,19 +359,36 @@ void suppress_kerberos() {
   setenv("KRB5_CONFIG", "/dev/null", 0);
 }
 
+void apply_log_level(int verbose) {
+  if (verbose <= 0) {
+    return;
+  }
+  DWORD level = WLOG_DEBUG;
+  if (verbose >= 2) {
+    level = WLOG_TRACE;
+  }
+  std::ignore = WLog_SetLogLevel(WLog_GetRoot(), level);
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
   suppress_kerberos();
   init_config();
   auto args = parse_args(argc, argv);
+  apply_log_level(args.verbose);
   auto rdp = load_rdp(args.rdp_path, args.rdp_overrides);
 
   if (!args.quiet) {
     rdp->print(std::cerr);
   }
 
-  auto password = resolve_password(rdp->server(), rdp->username(), args.quiet);
+  std::string password;
+  if (args.password_stdin) {
+    password = read_password_stdin();
+  } else {
+    password = resolve_password(rdp->server(), rdp->username(), args.quiet);
+  }
   wait_for_accessibility(args.grab_keyboard);
   confirm_connection(args.auto_connect);
 
@@ -362,5 +405,6 @@ int main(int argc, char* argv[]) {
                       .takeover = args.takeover,
                       .resolution_height = args.resolution_height,
                       .display = args.display,
-                      .host_keys = host_keys});
+                      .host_keys = host_keys},
+                     args.password_stdin);
 }

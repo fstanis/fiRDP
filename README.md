@@ -45,6 +45,10 @@ Note: artifacts require a GitHub account to download and expire after 90 days.
 Requirements: clang, lld, cmake, SDL3, and FreeRDP's build dependencies (openssl, ffmpeg, libusb, cups, jansson). On Linux: libsecret. On macOS: Xcode command line tools.
 
 ```sh
+sudo port install clang-18 SDL3 cmake openssl libusb jansson ffmpeg8
+```
+
+```sh
 git submodule update --init --recursive
 cmake -B build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target fiRDP -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
