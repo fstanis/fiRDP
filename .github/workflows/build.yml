@@ -27,7 +27,7 @@ jobs:
             libva-dev libusb-1.0-0-dev \
             libicu-dev libfuse3-dev libcups2-dev libkrb5-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -40,7 +40,7 @@ jobs:
           cmake --build build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fiRDP-trixie-${{ matrix.arch }}
           path: build/fiRDP
@@ -55,7 +55,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -72,7 +72,7 @@ jobs:
           flatpak build-bundle repo fiRDP.flatpak me.stanis.apps.fiRDP
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fiRDP-flatpak-${{ matrix.arch }}
           path: fiRDP.flatpak
@@ -80,7 +80,7 @@ jobs:
   macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -95,7 +95,7 @@ jobs:
           cmake --build build
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fiRDP-macos-arm64
           path: build/fiRDP.app
